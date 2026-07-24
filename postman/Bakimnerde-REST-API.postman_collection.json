@@ -1,0 +1,273 @@
+{
+  "info": {
+    "_postman_id": "f3a2ea82-85e9-4e81-a34d-bakimnerde2026",
+    "name": "Bakımnerde REST API — Kapsamlı Denetim",
+    "description": "Tenant, auth, iş, fiyat, cüzdan ve audit uçlarını sıralı olarak doğrular. Collection Runner ile klasör sırasına göre çalıştırın.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{platformToken}}", "type": "string" }]
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://127.0.0.1:3000" },
+    { "key": "platformToken", "value": "" },
+    { "key": "manufacturerToken", "value": "" },
+    { "key": "cpoTenantId", "value": "" },
+    { "key": "manufacturerTenantId", "value": "" },
+    { "key": "contractorTenantId", "value": "" },
+    { "key": "createdTenantId", "value": "" },
+    { "key": "createdJobId", "value": "" },
+    { "key": "createdPriceId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "01 — Sistem Sağlığı",
+      "item": [
+        {
+          "name": "Liveness",
+          "auth": { "type": "noauth" },
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/health-live" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('200 ve alive', () => { pm.response.to.have.status(200); pm.expect(pm.response.json().data.status).to.eql('alive'); });"] } }]
+        },
+        {
+          "name": "Readiness",
+          "auth": { "type": "noauth" },
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/health-ready" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('API hazır', () => pm.response.to.have.status(200));"] } }]
+        }
+      ]
+    },
+    {
+      "name": "02 — Auth ve Roller",
+      "item": [
+        {
+          "name": "Bakımnerde Girişi",
+          "auth": { "type": "noauth" },
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"email\":\"admin@bakimnerde.com\",\"password\":\"Bakimnerde!2026\"}" },
+            "url": "{{baseUrl}}/auth-login"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["const body = pm.response.json();", "pm.test('Platform girişi başarılı', () => { pm.response.to.have.status(200); pm.expect(body.data.principal.role).to.eql('PLATFORM_ADMIN'); });", "pm.collectionVariables.set('platformToken', body.data.token);"] } }]
+        },
+        {
+          "name": "Aktif Kullanıcı",
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/auth-me" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Platform principal döndü', () => pm.expect(pm.response.json().data.tenantType).to.eql('PLATFORM'));"] } }]
+        },
+        {
+          "name": "Hatalı Parola 401",
+          "auth": { "type": "noauth" },
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"email\":\"admin@bakimnerde.com\",\"password\":\"yanlis\"}" },
+            "url": "{{baseUrl}}/auth-login"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Hatalı giriş reddedildi', () => pm.response.to.have.status(401));"] } }]
+        },
+        {
+          "name": "Üretici Girişi",
+          "auth": { "type": "noauth" },
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"email\":\"yonetici@voltera.test\",\"password\":\"Bakimnerde!2026\"}" },
+            "url": "{{baseUrl}}/auth-login"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["const body = pm.response.json();", "pm.test('Üretici rolü doğru', () => pm.expect(body.data.principal.role).to.eql('MANUFACTURER_ADMIN'));", "pm.collectionVariables.set('manufacturerToken', body.data.token);"] } }]
+        },
+        {
+          "name": "Üretici Tenant Listesi 403",
+          "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{manufacturerToken}}", "type": "string" }] },
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/tenants-list" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Tenant izolasyonu çalışıyor', () => pm.response.to.have.status(403));"] } }]
+        }
+      ]
+    },
+    {
+      "name": "03 — Tenant CRUD",
+      "item": [
+        {
+          "name": "Tenant Listesi ve Seed ID'leri",
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/tenants-list" },
+          "event": [{ "listen": "test", "script": { "exec": ["const rows = pm.response.json().data;", "pm.test('Tenant listesi geldi', () => { pm.response.to.have.status(200); pm.expect(rows.length).to.be.above(2); });", "for (const row of rows) { if (row.type === 'CPO') pm.collectionVariables.set('cpoTenantId', row.id); if (row.type === 'MANUFACTURER') pm.collectionVariables.set('manufacturerTenantId', row.id); if (row.type === 'CONTRACTOR') pm.collectionVariables.set('contractorTenantId', row.id); }"] } }]
+        },
+        {
+          "name": "Tenant Oluştur",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"name\":\"Postman Test Taşeron\",\"tenantKey\":\"postman-test-{{$timestamp}}\",\"type\":\"CONTRACTOR\",\"contactEmail\":\"postman-{{$timestamp}}@test.local\",\"contactPhone\":\"05000000000\",\"adminName\":\"Postman Yönetici\",\"adminEmail\":\"postman-admin-{{$timestamp}}@test.local\",\"adminPassword\":\"Test!2026\",\"profile\":{\"maintenanceBaseCost\":5000,\"serviceRegions\":[\"İstanbul\"],\"availabilityDays\":[1,2,3,4,5]}}" },
+            "url": "{{baseUrl}}/tenants-create"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["const body = pm.response.json();", "pm.test('Tenant oluşturuldu', () => pm.response.to.have.status(201));", "pm.collectionVariables.set('createdTenantId', body.data.id);"] } }]
+        },
+        {
+          "name": "Tenant Güncelle",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"id\":\"{{createdTenantId}}\",\"name\":\"Postman Test Taşeron Güncel\",\"contactEmail\":\"postman-updated@test.local\",\"contactPhone\":\"05001112233\",\"status\":\"ACTIVE\",\"profile\":{\"maintenanceBaseCost\":5750,\"serviceRegions\":[\"İstanbul\",\"Kocaeli\"],\"availabilityDays\":[1,2,3,4,5,6]}}" },
+            "url": "{{baseUrl}}/tenants-update"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Tenant güncellendi', () => pm.response.to.have.status(200));"] } }]
+        },
+        {
+          "name": "Tenant Sil",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"id\":\"{{createdTenantId}}\"}" },
+            "url": "{{baseUrl}}/tenants-delete"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('İşsiz tenant silindi', () => { pm.response.to.have.status(200); pm.expect(pm.response.json().data.deleted).to.eql(true); });"] } }]
+        }
+      ]
+    },
+    {
+      "name": "04 — İş CRUD ve Durum",
+      "item": [
+        {
+          "name": "İş Oluştur",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"cpoTenantId\":\"{{cpoTenantId}}\",\"manufacturerTenantId\":\"{{manufacturerTenantId}}\",\"contractorTenantId\":\"{{contractorTenantId}}\",\"stationName\":\"Postman Test İstasyonu\",\"city\":\"İstanbul\",\"chargerExternalId\":\"PM-CHG-{{$timestamp}}\",\"chargerModel\":\"VX-180\",\"deadlineAt\":\"2026-08-15T09:00:00.000Z\",\"appointmentAt\":\"2026-08-01T09:00:00.000Z\",\"cpoPrice\":15000,\"contractorCost\":7000}" },
+            "url": "{{baseUrl}}/jobs-create"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["const body = pm.response.json();", "pm.test('İş oluşturuldu', () => pm.response.to.have.status(200));", "pm.collectionVariables.set('createdJobId', body.data.id);"] } }]
+        },
+        {
+          "name": "İş Listesi",
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/jobs-list" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('İş listesi geldi', () => pm.response.to.have.status(200));"] } }]
+        },
+        {
+          "name": "İş Güncelle",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"id\":\"{{createdJobId}}\",\"cpoTenantId\":\"{{cpoTenantId}}\",\"manufacturerTenantId\":\"{{manufacturerTenantId}}\",\"contractorTenantId\":\"{{contractorTenantId}}\",\"stationName\":\"Postman Test İstasyonu Güncel\",\"city\":\"İstanbul\",\"chargerExternalId\":\"PM-CHG-UPDATED\",\"chargerModel\":\"VX-360\",\"deadlineAt\":\"2026-08-20T09:00:00.000Z\",\"appointmentAt\":\"2026-08-03T09:00:00.000Z\",\"cpoPrice\":16500,\"contractorCost\":7500}" },
+            "url": "{{baseUrl}}/jobs-update"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('İş güncellendi', () => pm.response.to.have.status(200));"] } }]
+        },
+        {
+          "name": "İş Durumu Değiştir",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"id\":\"{{createdJobId}}\",\"status\":\"ASSIGNED\",\"note\":\"Postman denetim ataması\"}" },
+            "url": "{{baseUrl}}/jobs-status-change"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Durum güncellendi', () => pm.expect(pm.response.json().data.status).to.eql('ASSIGNED'));"] } }]
+        },
+        {
+          "name": "İş Sil",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"id\":\"{{createdJobId}}\"}" },
+            "url": "{{baseUrl}}/jobs-delete"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Başlanmamış iş silindi', () => pm.expect(pm.response.json().data.deleted).to.eql(true));"] } }]
+        }
+      ]
+    },
+    {
+      "name": "05 — Fiyat CRUD",
+      "item": [
+        {
+          "name": "Fiyat Oluştur",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"itemCode\":\"PM-FAN-{{$timestamp}}\",\"itemName\":\"Postman Fan İşçiliği\",\"category\":\"Ek İşçilik\",\"cost\":5000,\"salePrice\":8000,\"currency\":\"TRY\",\"supplyType\":\"Parça hariç\",\"counterpartyTenantId\":\"{{contractorTenantId}}\",\"active\":true}" },
+            "url": "{{baseUrl}}/pricing-create"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["const body = pm.response.json();", "pm.test('Fiyat oluşturuldu', () => pm.response.to.have.status(200));", "pm.collectionVariables.set('createdPriceId', body.data.id);"] } }]
+        },
+        {
+          "name": "Fiyat Listesi",
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/pricing-list" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Fiyat listesi geldi', () => pm.response.to.have.status(200));"] } }]
+        },
+        {
+          "name": "Fiyat Güncelle",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"id\":\"{{createdPriceId}}\",\"itemCode\":\"PM-FAN-UPDATED\",\"itemName\":\"Postman Fan İşçiliği Güncel\",\"category\":\"Ek İşçilik\",\"cost\":5250,\"salePrice\":8250,\"currency\":\"TRY\",\"supplyType\":\"Parça hariç\",\"counterpartyTenantId\":\"{{contractorTenantId}}\",\"active\":true}" },
+            "url": "{{baseUrl}}/pricing-update"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Fiyat güncellendi', () => pm.response.to.have.status(200));"] } }]
+        },
+        {
+          "name": "Fiyat Sil",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"id\":\"{{createdPriceId}}\"}" },
+            "url": "{{baseUrl}}/pricing-delete"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Fiyat silindi', () => pm.expect(pm.response.json().data.deleted).to.eql(true));"] } }]
+        }
+      ]
+    },
+    {
+      "name": "06 — Cüzdan ve Audit",
+      "item": [
+        {
+          "name": "Cüzdan Listesi",
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/wallets-list" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Cüzdanlar geldi', () => pm.response.to.have.status(200));"] } }]
+        },
+        {
+          "name": "Bakiye Ekle",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"tenantId\":\"{{cpoTenantId}}\",\"amount\":100,\"description\":\"Postman denetim bakiyesi\",\"reference\":\"POSTMAN-{{$timestamp}}\"}" },
+            "url": "{{baseUrl}}/wallet-adjust"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Bakiye hareketi oluştu', () => { pm.response.to.have.status(200); pm.expect(pm.response.json().data.transactionId).to.exist; });"] } }]
+        },
+        {
+          "name": "Cüzdan Hareketleri",
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/wallet-transactions-list" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Hareket listesi geldi', () => pm.response.to.have.status(200));"] } }]
+        },
+        {
+          "name": "Audit Logları",
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/audit-logs" },
+          "event": [{ "listen": "test", "script": { "exec": ["const rows = pm.response.json().data;", "pm.test('Mutationlar audit edildi', () => { pm.response.to.have.status(200); pm.expect(rows.length).to.be.above(5); });"] } }]
+        }
+      ]
+    },
+    {
+      "name": "07 — Negatif API Denetimleri",
+      "item": [
+        {
+          "name": "Query String Reddedilir",
+          "auth": { "type": "noauth" },
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/health-live?x=1" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Query string 400', () => pm.response.to.have.status(400));"] } }]
+        },
+        {
+          "name": "PATCH Reddedilir",
+          "request": { "method": "PATCH", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{}" }, "url": "{{baseUrl}}/jobs-list" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('PATCH 405', () => pm.response.to.have.status(405));"] } }]
+        },
+        {
+          "name": "Geçersiz Token Reddedilir",
+          "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "gecersiz.token", "type": "string" }] },
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/jobs-list" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Geçersiz token 401', () => pm.response.to.have.status(401));"] } }]
+        }
+      ]
+    }
+  ]
+}

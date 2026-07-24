@@ -13,11 +13,13 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "db:setup": "tsx scripts/setup-database.ts"
   },
   "dependencies": {
     "dotenv": "17.4.2",
-    "express": "5.2.1"
+    "express": "5.2.1",
+    "mongodb": "^6.17.0"
   },
   "devDependencies": {
     "@types/express": "5.0.6",

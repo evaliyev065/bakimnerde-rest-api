@@ -9,9 +9,13 @@ const config: AppConfig = {
   host: "127.0.0.1",
   port: 3000,
   apiVersion: "1",
-  logLevel: "silent"
+  logLevel: "silent",
+  mongodbUri: "mongodb://127.0.0.1:27017",
+  mongodbDatabase: "bakimnerde_test",
+  authTokenSecret: "test-secret-only",
+  corsOrigin: "http://127.0.0.1:4173"
 };
-const app = createApp(config, createContainer());
+const app = createApp(config, createContainer(config));
 
 describe("health endpointleri", () => {
   it("liveness durumunu standart zarfla döndürür", async () => {

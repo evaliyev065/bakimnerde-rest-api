@@ -1,11 +1,35 @@
+import type { AppConfig } from "../config/env.js";
+import { MongoDatabase } from "../infrastructure/mongodb/database.js";
+import { CommerceService } from "../modules/commerce/application/commerce.service.js";
+import { CommerceController } from "../modules/commerce/presentation/commerce.controller.js";
+import { AuditService } from "../modules/identity/application/audit.service.js";
+import { AuthService } from "../modules/identity/application/auth.service.js";
+import { TenantService } from "../modules/identity/application/tenant.service.js";
+import { IdentityController } from "../modules/identity/presentation/identity.controller.js";
+import { JobQueryService } from "../modules/operations/application/job-query.service.js";
+import { JobController } from "../modules/operations/presentation/job.controller.js";
 import { HealthService } from "../modules/platform-health/application/health.service.js";
 import { HealthController } from "../modules/platform-health/presentation/health.controller.js";
 
 export interface AppContainer {
   readonly healthController: HealthController;
+  readonly identityController: IdentityController;
+  readonly commerceController: CommerceController;
+  readonly jobController: JobController;
+  readonly database: MongoDatabase;
 }
 
-export function createContainer(): AppContainer {
+export function createContainer(config: AppConfig): AppContainer {
+  const database = new MongoDatabase(config);
   const healthService = new HealthService();
-  return { healthController: new HealthController(healthService) };
+  const auditService = new AuditService(database);
+  const authService = new AuthService(database, config.authTokenSecret);
+  const tenantService = new TenantService(database);
+  return {
+    database,
+    healthController: new HealthController(healthService),
+    identityController: new IdentityController(authService, tenantService, auditService),
+    commerceController: new CommerceController(new CommerceService(database), auditService),
+    jobController: new JobController(new JobQueryService(database), auditService),
+  };
 }

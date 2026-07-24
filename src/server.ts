@@ -6,7 +6,8 @@ import { loadConfig } from "./config/env.js";
 const loadedConfiguration = loadConfig();
 logConfigurationDiagnostics(loadedConfiguration.diagnostics);
 const { config } = loadedConfiguration;
-const app = createApp(config, createContainer());
+const container = createContainer(config);
+const app = createApp(config, container);
 const server = app.listen(config.port, config.host, () => {
   console.log(JSON.stringify({
     level: "info",
@@ -20,12 +21,13 @@ const server = app.listen(config.port, config.host, () => {
 
 function shutdown(signal: string): void {
   console.log(JSON.stringify({ level: "info", event: "api.stopping", signal }));
-  server.close((error) => {
+  server.close(async (error) => {
     if (error) {
       console.error(JSON.stringify({ level: "error", event: "api.stop_failed" }));
       process.exitCode = 1;
       return;
     }
+    await container.database.close();
     console.log(JSON.stringify({ level: "info", event: "api.stopped" }));
   });
 }

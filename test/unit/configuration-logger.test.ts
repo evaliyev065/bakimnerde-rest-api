@@ -13,9 +13,13 @@ describe("logConfigurationDiagnostics", () => {
         API_HOST: "default",
         API_PORT: "process_environment",
         API_VERSION: "default",
-        LOG_LEVEL: "default"
+        LOG_LEVEL: "default",
+        MONGODB_URI: "default",
+        MONGODB_DATABASE: "default",
+        AUTH_TOKEN_SECRET: "default",
+        CORS_ORIGIN: "default"
       },
-      defaultedKeys: ["NODE_ENV", "API_HOST", "API_VERSION", "LOG_LEVEL"]
+      defaultedKeys: ["NODE_ENV", "API_HOST", "API_VERSION", "LOG_LEVEL", "MONGODB_URI", "MONGODB_DATABASE", "AUTH_TOKEN_SECRET", "CORS_ORIGIN"]
     };
 
     logConfigurationDiagnostics(diagnostics, {

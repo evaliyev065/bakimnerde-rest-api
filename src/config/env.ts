@@ -10,6 +10,10 @@ export interface AppConfig {
   readonly port: number;
   readonly apiVersion: string;
   readonly logLevel: string;
+  readonly mongodbUri: string;
+  readonly mongodbDatabase: string;
+  readonly authTokenSecret: string;
+  readonly corsOrigin: string;
 }
 
 export const CONFIG_KEYS = [
@@ -17,7 +21,11 @@ export const CONFIG_KEYS = [
   "API_HOST",
   "API_PORT",
   "API_VERSION",
-  "LOG_LEVEL"
+  "LOG_LEVEL",
+  "MONGODB_URI",
+  "MONGODB_DATABASE",
+  "AUTH_TOKEN_SECRET",
+  "CORS_ORIGIN"
 ] as const;
 
 export type ConfigKey = (typeof CONFIG_KEYS)[number];
@@ -92,7 +100,11 @@ export function loadConfig(options: LoadConfigOptions = {}): LoadedConfiguration
     host: runtimeEnv.API_HOST ?? "127.0.0.1",
     port: parsePort(runtimeEnv.API_PORT),
     apiVersion: runtimeEnv.API_VERSION ?? "1",
-    logLevel: runtimeEnv.LOG_LEVEL ?? "info"
+    logLevel: runtimeEnv.LOG_LEVEL ?? "info",
+    mongodbUri: runtimeEnv.MONGODB_URI ?? "mongodb://127.0.0.1:27017",
+    mongodbDatabase: runtimeEnv.MONGODB_DATABASE ?? "bakimnerde",
+    authTokenSecret: runtimeEnv.AUTH_TOKEN_SECRET ?? "development-only-change-this-secret",
+    corsOrigin: runtimeEnv.CORS_ORIGIN ?? "http://127.0.0.1:4173"
   };
 
   return {

@@ -27,7 +27,11 @@ describe("loadConfig", () => {
       host: "127.0.0.1",
       port: 3000,
       apiVersion: "1",
-      logLevel: "info"
+      logLevel: "info",
+      mongodbUri: "mongodb://127.0.0.1:27017",
+      mongodbDatabase: "bakimnerde",
+      authTokenSecret: "development-only-change-this-secret",
+      corsOrigin: "http://127.0.0.1:4173"
     });
     expect(loaded.diagnostics.envFile.found).toBe(false);
     expect(loaded.diagnostics.defaultedKeys).toEqual([
@@ -35,7 +39,11 @@ describe("loadConfig", () => {
       "API_HOST",
       "API_PORT",
       "API_VERSION",
-      "LOG_LEVEL"
+      "LOG_LEVEL",
+      "MONGODB_URI",
+      "MONGODB_DATABASE",
+      "AUTH_TOKEN_SECRET",
+      "CORS_ORIGIN"
     ]);
   });
 
