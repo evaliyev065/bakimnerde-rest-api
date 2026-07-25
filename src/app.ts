@@ -4,7 +4,10 @@ import type { AppConfig } from "./config/env.js";
 import { registerCommerceRoutes } from "./modules/commerce/presentation/commerce.routes.js";
 import { registerHealthRoutes } from "./modules/platform-health/presentation/health.routes.js";
 import { registerIdentityRoutes } from "./modules/identity/presentation/identity.routes.js";
+import { registerContractorRegistrationRoutes } from "./modules/identity/presentation/contractor-registration.routes.js";
+import { registerUserManagementRoutes } from "./modules/identity/presentation/user-management.routes.js";
 import { registerJobRoutes } from "./modules/operations/presentation/job.routes.js";
+import { registerJobCollaborationRoutes } from "./modules/operations/presentation/job-collaboration.routes.js";
 import {
   errorHandler,
   notFoundHandler,
@@ -19,7 +22,12 @@ export function createApp(config: AppConfig, container: AppContainer): Express {
   app.disable("x-powered-by");
   app.use(requestContext(config));
   app.use((request, response, next) => {
-    response.setHeader("access-control-allow-origin", config.corsOrigin);
+    const allowedOrigins = config.corsOrigin.split(",").map((origin) => origin.trim()).filter(Boolean);
+    const requestOrigin = request.headers.origin;
+    if (requestOrigin && allowedOrigins.includes(requestOrigin)) {
+      response.setHeader("access-control-allow-origin", requestOrigin);
+      response.setHeader("vary", "Origin");
+    }
     response.setHeader("access-control-allow-headers", "content-type, authorization, x-request-id");
     response.setHeader("access-control-allow-methods", "GET, POST, OPTIONS");
     if (request.method === "OPTIONS") {
@@ -34,8 +42,11 @@ export function createApp(config: AppConfig, container: AppContainer): Express {
   const routes = new RouteRegistry(app);
   registerHealthRoutes(routes, container.healthController);
   registerIdentityRoutes(routes, container.identityController, config);
+  registerContractorRegistrationRoutes(routes, container.contractorRegistrationController, config);
+  registerUserManagementRoutes(routes, container.userManagementController, config);
   registerCommerceRoutes(routes, container.commerceController, config);
   registerJobRoutes(routes, container.jobController, config);
+  registerJobCollaborationRoutes(routes, container.jobCollaborationController, config);
 
   app.use(rejectUnsupportedBusinessMethod);
   app.use(notFoundHandler);

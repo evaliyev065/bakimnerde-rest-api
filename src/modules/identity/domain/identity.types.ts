@@ -1,18 +1,21 @@
 import type { ObjectId } from "mongodb";
 
-export type TenantType = "PLATFORM" | "MANUFACTURER" | "CPO" | "CONTRACTOR";
+export type TenantType = "PLATFORM" | "CPO" | "CONTRACTOR";
 export type UserRole =
-  | "PLATFORM_ADMIN"
+  | "PLATFORM_OWNER"
   | "PLATFORM_STAFF"
-  | "MANUFACTURER_ADMIN"
   | "CPO_ADMIN"
-  | "CONTRACTOR_ADMIN";
+  | "CPO_STAFF"
+  | "CONTRACTOR_ADMIN"
+  | "CONTRACTOR_STAFF"
+  | "FIELD_WORKER";
 
 export interface TenantDocument {
   _id?: ObjectId;
   tenantKey: string;
   name: string;
   type: TenantType;
+  immutable?: boolean;
   status: "ACTIVE" | "SUSPENDED";
   contact: { email: string; phone: string };
   commercialPolicy: Record<string, unknown>;
@@ -26,6 +29,7 @@ export interface UserDocument {
   email: string;
   emailNormalized: string;
   name: string;
+  phone?: string;
   passwordHash: string;
   role: UserRole;
   status: "ACTIVE" | "SUSPENDED";

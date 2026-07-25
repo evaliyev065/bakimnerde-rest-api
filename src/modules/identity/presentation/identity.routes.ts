@@ -5,7 +5,9 @@ import { authenticate } from "./auth.middleware.js";
 
 export function registerIdentityRoutes(routes: RouteRegistry, controller: IdentityController, config: AppConfig): void {
   const authenticated = authenticate(config);
-  routes.post("/auth-login", controller.login);
+  routes.post("/auth-platform-login", controller.platformLogin);
+  routes.post("/auth-company-login", controller.companyLogin);
+  routes.post("/auth-field-login", controller.fieldLogin);
   routes.get("/auth-me", authenticated, controller.me);
   routes.get("/tenants-list", authenticated, controller.listTenants);
   routes.post("/tenants-create", authenticated, controller.createTenant);

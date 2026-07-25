@@ -4,10 +4,10 @@ import { AppError } from "../../../shared/errors/app-error.js";
 import type { AuthPrincipal, TenantDocument, TenantType, UserDocument, UserRole } from "../domain/identity.types.js";
 import { hashPassword } from "../infrastructure/password.js";
 
-const TENANT_TYPES = new Set<TenantType>(["PLATFORM", "MANUFACTURER", "CPO", "CONTRACTOR"]);
+const TENANT_TYPES = new Set<TenantType>(["CPO", "CONTRACTOR"]);
+const PHONE_PATTERN = /^[1-9]\d{9}$/;
 const ADMIN_ROLES: Record<TenantType, UserRole> = {
-  PLATFORM: "PLATFORM_ADMIN",
-  MANUFACTURER: "MANUFACTURER_ADMIN",
+  PLATFORM: "PLATFORM_OWNER",
   CPO: "CPO_ADMIN",
   CONTRACTOR: "CONTRACTOR_ADMIN",
 };
@@ -43,13 +43,12 @@ export class TenantService {
       { $sort: { createdAt: -1 } },
       { $lookup: { from: "contractorProfiles", localField: "_id", foreignField: "tenantId", as: "contractorProfile" } },
       { $lookup: { from: "cpoProfiles", localField: "_id", foreignField: "tenantId", as: "cpoProfile" } },
-      { $lookup: { from: "manufacturerProfiles", localField: "_id", foreignField: "tenantId", as: "manufacturerProfile" } },
       { $project: {
         id: { $toString: "$_id" }, _id: 0, tenantKey: 1, name: 1, type: 1, status: 1, contact: 1, createdAt: 1, updatedAt: 1,
         hasPrivatePolicy: { $gt: [{ $size: { $objectToArray: "$commercialPolicy" } }, 0] },
         profile: { $ifNull: [
           { $first: "$contractorProfile" },
-          { $ifNull: [{ $first: "$cpoProfile" }, { $first: "$manufacturerProfile" }] },
+          { $first: "$cpoProfile" },
         ] },
       } },
       { $set: { "profile._id": "$$REMOVE", "profile.tenantId": "$$REMOVE" } },
@@ -101,6 +100,9 @@ export class TenantService {
     if (!input.name?.trim() || !input.contactEmail?.includes("@") || !["ACTIVE", "SUSPENDED"].includes(input.status)) {
       throw new AppError(400, "TENANT_UPDATE_INVALID", "Firma adı, e-posta ve durum alanlarını kontrol edin.", false);
     }
+    if (!PHONE_PATTERN.test(input.contactPhone)) {
+      throw new AppError(400, "PHONE_INVALID", "Telefon numarası 0 ile başlamayan 10 hane olmalıdır.", false);
+    }
     const db = await this.database.db();
     const tenant = await db.collection<TenantDocument>("tenants").findOne({ _id: id });
     if (tenant === null) throw new AppError(404, "TENANT_NOT_FOUND", "Firma bulunamadı.", false);
@@ -125,7 +127,7 @@ export class TenantService {
     if (tenant === null) throw new AppError(404, "TENANT_NOT_FOUND", "Firma bulunamadı.", false);
     if (tenant.type === "PLATFORM") throw new AppError(409, "PLATFORM_TENANT_PROTECTED", "Bakımnerde merkez tenantı silinemez.", false);
     const relatedJobs = await db.collection("jobs").countDocuments({ $or: [
-      { cpoTenantId: id }, { manufacturerTenantId: id }, { contractorTenantId: id },
+      { cpoTenantId: id }, { contractorTenantId: id },
     ] });
     if (relatedJobs > 0) {
       throw new AppError(409, "TENANT_HAS_OPERATIONS", "Geçmiş işi bulunan firma silinemez; firmayı askıya alın.", false);
@@ -135,7 +137,6 @@ export class TenantService {
       db.collection("users").deleteMany({ tenantId: id }),
       db.collection("contractorProfiles").deleteMany({ tenantId: id }),
       db.collection("cpoProfiles").deleteMany({ tenantId: id }),
-      db.collection("manufacturerProfiles").deleteMany({ tenantId: id }),
       db.collection("wallets").deleteMany({ tenantId: id }),
       db.collection("pricingRules").deleteMany({ counterpartyTenantId: id }),
     ]);
@@ -143,7 +144,7 @@ export class TenantService {
   }
 
   private async upsertProfile(db: Awaited<ReturnType<MongoDatabase["db"]>>, tenantId: ObjectId, type: TenantType, profile: Record<string, unknown>, now: Date): Promise<void> {
-    const collection = type === "CONTRACTOR" ? "contractorProfiles" : type === "CPO" ? "cpoProfiles" : type === "MANUFACTURER" ? "manufacturerProfiles" : null;
+    const collection = type === "CONTRACTOR" ? "contractorProfiles" : type === "CPO" ? "cpoProfiles" : null;
     if (collection === null) return;
     await db.collection(collection).updateOne({ tenantId }, { $set: { ...profile, tenantId, updatedAt: now }, $setOnInsert: { createdAt: now } }, { upsert: true });
   }
@@ -163,6 +164,9 @@ export class TenantService {
     if (!input.name?.trim() || !input.tenantKey?.trim() || !TENANT_TYPES.has(input.type)
       || !input.adminName?.trim() || !input.adminEmail?.includes("@") || input.adminPassword?.length < 8) {
       throw new AppError(400, "TENANT_INPUT_INVALID", "Tenant ve yönetici bilgilerini eksiksiz girin; parola en az 8 karakter olmalıdır.", false);
+    }
+    if (!PHONE_PATTERN.test(input.contactPhone)) {
+      throw new AppError(400, "PHONE_INVALID", "Telefon numarası 0 ile başlamayan 10 hane olmalıdır.", false);
     }
   }
 }

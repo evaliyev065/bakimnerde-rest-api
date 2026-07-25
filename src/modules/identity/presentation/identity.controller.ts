@@ -13,19 +13,38 @@ export class IdentityController {
     private readonly auditService: AuditService,
   ) {}
 
-  public login = async (request: Request, response: Response): Promise<void> => {
+  public platformLogin = async (request: Request, response: Response): Promise<void> => {
     const body = request.body as { email?: string; password?: string };
-    const result = await this.authService.login(body.email ?? "", body.password ?? "");
-    await this.auditService.record({
-      principal: result.principal,
-      action: "AUTH_LOGIN_SUCCEEDED",
-      resourceType: "session",
-      resourceId: result.principal.userId,
-      requestId: (request as ContextRequest).context.requestId,
-      ipAddress: request.ip ?? "unknown",
-    });
+    const result = await this.authService.platformLogin(body.email ?? "", body.password ?? "");
+    await this.recordLogin(request, result.principal, "PLATFORM");
     response.json(success(request as ContextRequest, result));
   };
+
+  public companyLogin = async (request: Request, response: Response): Promise<void> => {
+    const body = request.body as { email?: string; password?: string };
+    const result = await this.authService.companyLogin(body.email ?? "", body.password ?? "");
+    await this.recordLogin(request, result.principal, "COMPANY");
+    response.json(success(request as ContextRequest, result));
+  };
+
+  public fieldLogin = async (request: Request, response: Response): Promise<void> => {
+    const body = request.body as { email?: string; password?: string };
+    const result = await this.authService.fieldLogin(body.email ?? "", body.password ?? "");
+    await this.recordLogin(request, result.principal, "FIELD");
+    response.json(success(request as ContextRequest, result));
+  };
+
+  private async recordLogin(request: Request, principal: AuthenticatedResponse["locals"]["auth"], channel: string): Promise<void> {
+    await this.auditService.record({
+      principal,
+      action: "AUTH_LOGIN_SUCCEEDED",
+      resourceType: "session",
+      resourceId: principal.userId,
+      requestId: (request as ContextRequest).context.requestId,
+      ipAddress: request.ip ?? "unknown",
+      payload: { channel },
+    });
+  }
 
   public me = (request: Request, response: Response): void => {
     response.json(success(request as ContextRequest, (response as AuthenticatedResponse).locals.auth));

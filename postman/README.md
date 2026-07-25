@@ -5,4 +5,4 @@
 3. API'yi `npm.cmd run dev` ile çalıştırın.
 4. Koleksiyonu Collection Runner ile klasör sırasına göre çalıştırın.
 
-Koleksiyon tokenları ve oluşturduğu kayıt kimliklerini otomatik saklar. CRUD kayıtlarını test sonunda temizler; yalnız cüzdan denetimi için 100 TL'lik izlenebilir bir test hareketi bırakır.
+Koleksiyon dört giriş kanalını ve oluşturduğu kayıt kimliklerini otomatik yönetir. CRUD kayıtlarını test sonunda temizler; yalnız cüzdan denetimi için 1 TL'lik izlenebilir bir test hareketi bırakır.

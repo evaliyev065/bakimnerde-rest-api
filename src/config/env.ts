@@ -104,7 +104,7 @@ export function loadConfig(options: LoadConfigOptions = {}): LoadedConfiguration
     mongodbUri: runtimeEnv.MONGODB_URI ?? "mongodb://127.0.0.1:27017",
     mongodbDatabase: runtimeEnv.MONGODB_DATABASE ?? "bakimnerde",
     authTokenSecret: runtimeEnv.AUTH_TOKEN_SECRET ?? "development-only-change-this-secret",
-    corsOrigin: runtimeEnv.CORS_ORIGIN ?? "http://127.0.0.1:4173"
+    corsOrigin: runtimeEnv.CORS_ORIGIN ?? "http://127.0.0.1:4173,http://127.0.0.1:4174,http://localhost:4173,http://localhost:4174"
   };
 
   return {
