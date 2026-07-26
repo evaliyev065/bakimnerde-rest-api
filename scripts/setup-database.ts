@@ -1,9 +1,32 @@
+import { resolve } from "node:path";
+import { config as loadDotEnv } from "dotenv";
 import { MongoClient, ObjectId } from "mongodb";
 import { hashPassword } from "../src/modules/identity/infrastructure/password.js";
 
+loadDotEnv({ path: resolve(process.cwd(), ".env") });
+
 const uri = process.env.MONGODB_URI ?? "mongodb://127.0.0.1:27017";
 const databaseName = process.env.MONGODB_DATABASE ?? "bakimnerde";
+const uriHost = (() => {
+  try {
+    return new URL(uri.replace(/^mongodb(\+srv)?:\/\//, "http://")).host;
+  } catch {
+    return "(parse edilemedi)";
+  }
+})();
+
+console.log(`Bağlanılıyor: ${uriHost} / db=${databaseName}`);
+
 const client = new MongoClient(uri);
+try {
+  await client.connect();
+  await client.db("admin").command({ ping: 1 });
+  console.log("MongoDB bağlantısı başarılı.");
+} catch (error) {
+  console.error("MongoDB bağlantısı başarısız:", error instanceof Error ? error.message : error);
+  process.exit(1);
+}
+
 const db = client.db(databaseName);
 const now = new Date();
 
