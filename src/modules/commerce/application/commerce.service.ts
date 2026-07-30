@@ -75,9 +75,11 @@ export class CommerceService {
   }
 
   public async listWallets(principal: AuthPrincipal): Promise<Document[]> {
-    this.assertPlatform(principal);
+    this.assertWalletReader(principal);
     const db = await this.database.db();
+    const match = principal.tenantType === "PLATFORM" ? {} : { tenantId: new ObjectId(principal.tenantId) };
     return db.collection("wallets").aggregate([
+      { $match: match },
       { $sort: { updatedAt: -1 } },
       { $lookup: { from: "tenants", localField: "tenantId", foreignField: "_id", as: "tenant" } },
       { $project: {
@@ -112,10 +114,11 @@ export class CommerceService {
   }
 
   public async listWalletTransactions(principal: AuthPrincipal): Promise<Document[]> {
-    this.assertPlatform(principal);
+    this.assertWalletReader(principal);
     const db = await this.database.db();
+    const match = principal.tenantType === "PLATFORM" ? {} : { tenantId: new ObjectId(principal.tenantId) };
     return db.collection("walletTransactions").aggregate([
-      { $sort: { createdAt: -1 } }, { $limit: 200 },
+      { $match: match }, { $sort: { createdAt: -1 } }, { $limit: 200 },
       { $lookup: { from: "tenants", localField: "tenantId", foreignField: "_id", as: "tenant" } },
       { $project: {
         id: { $toString: "$_id" }, _id: 0, tenantId: { $toString: "$tenantId" },
@@ -139,5 +142,12 @@ export class CommerceService {
 
   private assertPlatform(principal: AuthPrincipal): void {
     if (principal.tenantType !== "PLATFORM") throw new AppError(403, "PLATFORM_ACCESS_REQUIRED", "Bu işlem yalnız Bakımnerde personeline açıktır.", false);
+  }
+
+  private assertWalletReader(principal: AuthPrincipal): void {
+    const companyRoles = ["CPO_ADMIN", "CPO_STAFF", "CONTRACTOR_ADMIN", "CONTRACTOR_STAFF"];
+    if (principal.tenantType !== "PLATFORM" && !companyRoles.includes(principal.role)) {
+      throw new AppError(403, "WALLET_ACCESS_FORBIDDEN", "Cüzdan yalnız şirket yönetim hesaplarına açıktır.", false);
+    }
   }
 }

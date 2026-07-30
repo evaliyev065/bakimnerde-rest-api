@@ -3,7 +3,7 @@ import type { MongoDatabase } from "../../../infrastructure/mongodb/database.js"
 import { AppError } from "../../../shared/errors/app-error.js";
 import type { AuthPrincipal } from "../../identity/domain/identity.types.js";
 
-const JOB_STATUSES = new Set(["WAITING", "ASSIGNED", "IN_PROGRESS", "MAINTENANCE_DONE", "MAINTENANCE_APPROVED", "CPO_APPROVAL", "PAID", "CLOSED"]);
+const JOB_STATUSES = new Set(["WAITING", "ASSIGNED", "IN_PROGRESS", "ADDITIONAL_SUPPLY", "MAINTENANCE_DONE", "MAINTENANCE_APPROVED", "CPO_APPROVAL", "PAID", "CLOSED"]);
 
 interface JobInput {
   id?: string;
@@ -12,8 +12,10 @@ interface JobInput {
   stationName: string;
   city: string;
   district: string;
-  chargerExternalId: string;
-  chargerModel: string;
+  maintenanceTarget?: "DEVICE" | "STATION";
+  stationMaintenanceArea?: "GENERAL_COMPONENTS" | "GRID_CONNECTION";
+  chargerExternalId?: string;
+  chargerModel?: string;
   status?: string;
   appointmentAt?: string;
   deadlineAt: string;
@@ -26,12 +28,7 @@ export class JobQueryService {
 
   public async list(principal: AuthPrincipal): Promise<Document[]> {
     const db = await this.database.db();
-    const tenantId = new ObjectId(principal.tenantId);
-    const match = principal.tenantType === "PLATFORM" ? {} :
-      principal.tenantType === "CPO" ? { cpoTenantId: tenantId } :
-      principal.role === "FIELD_WORKER"
-        ? { contractorTenantId: tenantId, fieldWorkerUserId: new ObjectId(principal.userId) }
-        : { contractorTenantId: tenantId };
+    const match = this.jobMatch(principal);
     const amountPath = principal.tenantType === "CONTRACTOR"
       ? "$pricingSnapshot.contractorCost"
       : "$pricingSnapshot.cpoPrice";
@@ -44,8 +41,12 @@ export class JobQueryService {
       { $project: {
         documentId: { $toString: "$_id" }, _id: 0, id: "$jobNumber", station: "$station.name", city: "$station.city",
         district: { $ifNull: ["$station.district", ""] },
+        maintenanceTarget: { $ifNull: ["$maintenanceTarget", "DEVICE"] },
+        stationMaintenanceArea: { $ifNull: ["$stationMaintenanceArea", null] },
         charger: "$charger.externalId", chargerModel: "$charger.model", status: 1, appointmentAt: 1,
         assignmentAcceptanceDeadlineAt: 1, contractorAcceptedAt: 1, outageNotificationSentAt: 1,
+        maintenanceStartedAt: 1,
+        maintenanceStartedByUserId: { $cond: [{ $ifNull: ["$maintenanceStartedByUserId", false] }, { $toString: "$maintenanceStartedByUserId" }, null] },
         workflowCycle: { $ifNull: ["$workflowCycle", 1] },
         deadlineAt: "$publishDeadlineAt", cpoTenantId: { $toString: "$cpoTenantId" },
         contractorTenantId: { $cond: [{ $ifNull: ["$contractorTenantId", false] }, { $toString: "$contractorTenantId" }, null] },
@@ -60,6 +61,151 @@ export class JobQueryService {
         contractorCost: principal.tenantType === "PLATFORM"
           ? { $cond: [{ $gt: [{ $ifNull: ["$pricingSnapshot.contractorCost", 0] }, 0] }, "$pricingSnapshot.contractorCost", null] }
           : { $literal: null },
+      } },
+    ]).toArray();
+  }
+
+  public async summary(principal: AuthPrincipal): Promise<{ total: number; active: number; byStatus: Record<string, number> }> {
+    const db = await this.database.db();
+    const rows = await db.collection("jobs").aggregate<{ _id: string; count: number }>([
+      { $match: this.jobMatch(principal) },
+      { $group: { _id: "$status", count: { $sum: 1 } } },
+    ]).toArray();
+    const byStatus = Object.fromEntries(rows.map((row) => [row._id, row.count]));
+    const total = rows.reduce((sum, row) => sum + row.count, 0);
+    return { total, active: total - Number(byStatus.CLOSED ?? 0), byStatus };
+  }
+
+  public async listChargePoints(principal: AuthPrincipal): Promise<Document[]> {
+    const db = await this.database.db();
+    const match: Document = principal.tenantType === "CPO"
+      ? { cpoTenantId: new ObjectId(principal.tenantId), active: { $ne: false } }
+      : { active: { $ne: false } };
+    if (principal.tenantType === "CONTRACTOR") {
+      const cpoIds = await db.collection("jobs").distinct("cpoTenantId", this.jobMatch(principal));
+      match.cpoTenantId = { $in: cpoIds };
+    }
+    const stored = await db.collection("chargePoints").aggregate([
+      { $match: match }, { $sort: { externalId: 1 } },
+      { $project: {
+        id: { $toString: "$_id" }, _id: 0, externalId: 1, model: 1, station: 1,
+        cpoTenantId: { $toString: "$cpoTenantId" },
+      } },
+    ]).toArray();
+    const snapshots = await db.collection("jobs").aggregate([
+      { $match: { ...this.jobMatch(principal), "charger.externalId": { $type: "string" } } },
+      { $project: {
+        id: { $concat: ["job-snapshot-", { $toString: "$_id" }] }, _id: 0,
+        externalId: "$charger.externalId", model: "$charger.model", station: 1,
+        cpoTenantId: { $toString: "$cpoTenantId" },
+      } },
+    ]).toArray();
+    return [...new Map([...snapshots, ...stored].map((item) => [`${item.cpoTenantId}:${item.externalId}`, item])).values()]
+      .sort((left, right) => String(left.externalId).localeCompare(String(right.externalId), "tr"));
+  }
+
+  public async listStations(principal: AuthPrincipal): Promise<Document[]> {
+    if (principal.tenantType === "CONTRACTOR") {
+      throw new AppError(403, "STATION_LIST_FORBIDDEN", "İstasyon listesini görüntüleme yetkiniz yok.", false);
+    }
+    const db = await this.database.db();
+    const [devices, jobStations] = await Promise.all([
+      this.listChargePoints(principal),
+      db.collection("jobs").aggregate([
+        { $match: this.jobMatch(principal) },
+        { $project: {
+          _id: 0, cpoTenantId: { $toString: "$cpoTenantId" },
+          name: "$station.name", city: "$station.city", district: { $ifNull: ["$station.district", ""] },
+        } },
+      ]).toArray(),
+    ]);
+    const stations = new Map<string, Document>();
+    for (const row of jobStations) {
+      const key = `${row.cpoTenantId}:${row.name}:${row.city}:${row.district}`;
+      stations.set(key, { id: key, cpoTenantId: row.cpoTenantId, name: row.name, city: row.city, district: row.district, deviceCount: 0 });
+    }
+    for (const device of devices) {
+      const station = device.station as Document | undefined;
+      if (!station?.name) continue;
+      const key = `${device.cpoTenantId}:${station.name}:${station.city}:${station.district ?? ""}`;
+      const current = stations.get(key);
+      stations.set(key, {
+        id: key,
+        cpoTenantId: device.cpoTenantId,
+        name: station.name,
+        city: station.city,
+        district: station.district ?? "",
+        deviceCount: Number(current?.deviceCount ?? 0) + 1,
+      });
+    }
+    return [...stations.values()].sort((left, right) =>
+      `${left.city} ${left.district} ${left.name}`.localeCompare(`${right.city} ${right.district} ${right.name}`, "tr"));
+  }
+
+  public async listChargePointMaintenance(
+    principal: AuthPrincipal,
+    input: { cpoTenantId?: string; externalId?: string },
+  ): Promise<Document[]> {
+    if (principal.tenantType === "CONTRACTOR") {
+      throw new AppError(403, "CHARGE_POINT_HISTORY_FORBIDDEN", "Cihaz bakım kayıtlarını görüntüleme yetkiniz yok.", false);
+    }
+    if (!input.cpoTenantId || !ObjectId.isValid(input.cpoTenantId) || !input.externalId?.trim()) {
+      throw new AppError(400, "CHARGE_POINT_IDENTIFIER_INVALID", "Cihaz bilgilerini kontrol edin.", false);
+    }
+    if (principal.tenantType === "CPO" && principal.tenantId !== input.cpoTenantId) {
+      throw new AppError(403, "CHARGE_POINT_HISTORY_FORBIDDEN", "Bu cihaz firmanıza ait değil.", false);
+    }
+    const db = await this.database.db();
+    return db.collection("jobs").aggregate([
+      { $match: {
+        cpoTenantId: new ObjectId(input.cpoTenantId),
+        "charger.externalId": input.externalId.trim(),
+        maintenanceTarget: { $ne: "STATION" },
+      } },
+      { $sort: { createdAt: -1 } },
+      { $limit: 100 },
+      { $lookup: { from: "tenants", localField: "contractorTenantId", foreignField: "_id", as: "contractor" } },
+      { $lookup: { from: "users", localField: "fieldWorkerUserId", foreignField: "_id", as: "fieldWorker" } },
+      { $project: {
+        documentId: { $toString: "$_id" }, _id: 0, id: "$jobNumber", status: 1,
+        maintenanceTarget: { $ifNull: ["$maintenanceTarget", "DEVICE"] },
+        station: "$station.name", city: "$station.city", district: "$station.district",
+        appointmentAt: 1, maintenanceStartedAt: 1, createdAt: 1, updatedAt: 1,
+        contractor: { $ifNull: [{ $first: "$contractor.name" }, "Atanmadı"] },
+        fieldWorkerName: { $ifNull: [{ $first: "$fieldWorker.name" }, null] },
+      } },
+    ]).toArray();
+  }
+
+  public async listStationMaintenance(
+    principal: AuthPrincipal,
+    input: { cpoTenantId?: string; stationName?: string; city?: string; district?: string },
+  ): Promise<Document[]> {
+    if (principal.tenantType === "CONTRACTOR") {
+      throw new AppError(403, "STATION_HISTORY_FORBIDDEN", "İstasyon bakım kayıtlarını görüntüleme yetkiniz yok.", false);
+    }
+    if (!input.cpoTenantId || !ObjectId.isValid(input.cpoTenantId) || !input.stationName?.trim() || !input.city?.trim() || !input.district?.trim()) {
+      throw new AppError(400, "STATION_IDENTIFIER_INVALID", "İstasyon bilgilerini kontrol edin.", false);
+    }
+    if (principal.tenantType === "CPO" && principal.tenantId !== input.cpoTenantId) {
+      throw new AppError(403, "STATION_HISTORY_FORBIDDEN", "Bu istasyon firmanıza ait değil.", false);
+    }
+    const db = await this.database.db();
+    return db.collection("jobs").aggregate([
+      { $match: {
+        cpoTenantId: new ObjectId(input.cpoTenantId), maintenanceTarget: "STATION",
+        "station.name": input.stationName.trim(), "station.city": input.city.trim(), "station.district": input.district.trim(),
+      } },
+      { $sort: { createdAt: -1 } }, { $limit: 100 },
+      { $lookup: { from: "tenants", localField: "contractorTenantId", foreignField: "_id", as: "contractor" } },
+      { $lookup: { from: "users", localField: "fieldWorkerUserId", foreignField: "_id", as: "fieldWorker" } },
+      { $project: {
+        documentId: { $toString: "$_id" }, _id: 0, id: "$jobNumber", status: 1,
+        maintenanceTarget: { $literal: "STATION" }, stationMaintenanceArea: 1,
+        station: "$station.name", city: "$station.city", district: "$station.district",
+        appointmentAt: 1, maintenanceStartedAt: 1, createdAt: 1, updatedAt: 1,
+        contractor: { $ifNull: [{ $first: "$contractor.name" }, "Atanmadı"] },
+        fieldWorkerName: { $ifNull: [{ $first: "$fieldWorker.name" }, null] },
       } },
     ]).toArray();
   }
@@ -91,6 +237,9 @@ export class JobQueryService {
     const fieldWorkerUserId = this.objectId(input.fieldWorkerUserId);
     const db = await this.database.db();
     const job = await db.collection("jobs").findOne({ _id: id });
+    if (job && ["MAINTENANCE_DONE", "MAINTENANCE_APPROVED", "CPO_APPROVAL", "PAID", "CLOSED"].includes(String(job.status))) {
+      throw new AppError(409, "FIELD_WORKER_ASSIGNMENT_LOCKED", "Bakım tamamlandıktan sonra saha personeli değiştirilemez.", false);
+    }
     if (job === null) throw new AppError(404, "JOB_NOT_FOUND", "İş bulunamadı.", false);
     if (!job.contractorTenantId) throw new AppError(409, "CONTRACTOR_NOT_ASSIGNED", "Önce işe taşeron firma atayın.", false);
     const contractorCanAssign = principal.tenantType === "CONTRACTOR"
@@ -132,11 +281,16 @@ export class JobQueryService {
     const cpoTenantId = principal.tenantType === "CPO" ? new ObjectId(principal.tenantId) : this.objectId(input.cpoTenantId);
     const contractorTenantId = principal.tenantType === "PLATFORM" && input.contractorTenantId ? this.objectId(input.contractorTenantId) : null;
     await this.assertTenantTypes(db, cpoTenantId, contractorTenantId);
+    const maintenanceTarget = this.maintenanceTarget(input);
+    const asset = maintenanceTarget === "DEVICE" ? await this.resolveChargePoint(db, cpoTenantId, input) : null;
+    const station = asset?.station ?? { name: input.stationName.trim(), city: input.city.trim(), district: input.district.trim() };
     const initialStatus = contractorTenantId ? "ASSIGNED" : "WAITING";
     await db.collection("jobs").insertOne({
       _id: id, jobNumber, cpoTenantId, contractorTenantId,
-      station: { name: input.stationName.trim(), city: input.city.trim(), district: input.district.trim() },
-      charger: { externalId: input.chargerExternalId.trim(), model: input.chargerModel.trim() },
+      maintenanceTarget,
+      stationMaintenanceArea: maintenanceTarget === "STATION" ? input.stationMaintenanceArea : null,
+      station,
+      charger: asset ? { externalId: asset.externalId, model: asset.model } : null,
       status: initialStatus, publishedAt: now, publishDeadlineAt: new Date(now.getTime() + 14 * 86400000),
       assignmentAt: contractorTenantId ? now : null,
       assignmentAcceptanceDeadlineAt: contractorTenantId ? new Date(now.getTime() + 86400000) : null,
@@ -164,6 +318,9 @@ export class JobQueryService {
     const cpoTenantId = this.objectId(input.cpoTenantId);
     const contractorTenantId = input.contractorTenantId ? this.objectId(input.contractorTenantId) : null;
     await this.assertTenantTypes(db, cpoTenantId, contractorTenantId);
+    const maintenanceTarget = this.maintenanceTarget(input);
+    const asset = maintenanceTarget === "DEVICE" ? await this.resolveChargePoint(db, cpoTenantId, input) : null;
+    const station = asset?.station ?? { name: input.stationName.trim(), city: input.city.trim(), district: input.district.trim() };
     const contractorChanged = String(current.contractorTenantId ?? "") !== String(contractorTenantId ?? "");
     const assignment = contractorChanged ? (contractorTenantId ? {
       status: "ASSIGNED", assignmentAt: new Date(), assignmentAcceptanceDeadlineAt: new Date(Date.now() + 86400000),
@@ -177,8 +334,10 @@ export class JobQueryService {
     const result = await db.collection("jobs").updateOne({ _id: id }, { $set: {
       cpoTenantId,
       contractorTenantId,
-      station: { name: input.stationName.trim(), city: input.city.trim(), district: input.district.trim() },
-      charger: { externalId: input.chargerExternalId.trim(), model: input.chargerModel.trim() },
+      maintenanceTarget,
+      stationMaintenanceArea: maintenanceTarget === "STATION" ? input.stationMaintenanceArea : null,
+      station,
+      charger: asset ? { externalId: asset.externalId, model: asset.model } : null,
       publishDeadlineAt: new Date(input.deadlineAt), appointmentAt: input.appointmentAt ? new Date(input.appointmentAt) : null,
       pricingSnapshot: {
         cpoPrice: input.cpoPrice === null || input.cpoPrice === undefined ? null : Number(input.cpoPrice),
@@ -192,11 +351,14 @@ export class JobQueryService {
     return { id: id.toHexString() };
   }
 
-  public async changeStatus(principal: AuthPrincipal, input: { id: string; status: string; note?: string }): Promise<{ id: string; status: string }> {
+  public async changeStatus(principal: AuthPrincipal, input: { id: string; status: string; note?: string; clientOperationId?: string }): Promise<{ id: string; status: string }> {
     if (!JOB_STATUSES.has(input.status)) throw new AppError(400, "JOB_STATUS_INVALID", "Geçersiz iş durumu.", false);
     const id = this.objectId(input.id);
     const db = await this.database.db();
     const job = await db.collection("jobs").findOne({ _id: id });
+    if (input.clientOperationId && job?.lastClientOperationId === input.clientOperationId && job.status === input.status) {
+      return { id: input.id, status: input.status };
+    }
     if (job === null) throw new AppError(404, "JOB_NOT_FOUND", "İş bulunamadı.", false);
     if (principal.tenantType === "CPO") {
       if (!job.cpoTenantId.equals(new ObjectId(principal.tenantId)) || input.status !== "CPO_APPROVAL" || job.status !== "MAINTENANCE_APPROVED") {
@@ -215,6 +377,10 @@ export class JobQueryService {
       }
       if (input.status === "MAINTENANCE_DONE") {
         if (job.status !== "IN_PROGRESS") throw new AppError(409, "JOB_TRANSITION_INVALID", "Bakım tamamlanmadan önce işlem başlatılmalıdır.", false);
+        const unresolvedSupplyCount = await db.collection("additionalRequests").countDocuments({ jobId: id, partSupplyStatus: { $ne: "SUPPLIED" } });
+        if (unresolvedSupplyCount > 0) {
+          throw new AppError(409, "ADDITIONAL_SUPPLY_PENDING", "Ek tedarik gereksinimi tamamlanmadan bakım işi tamamlanamaz.", false);
+        }
         const cycle = Number(job.workflowCycle ?? 1);
         const counts = await db.collection("jobMedia").aggregate<{ _id: string; count: number }>([
           { $match: { jobId: id, cycle } }, { $group: { _id: "$phase", count: { $sum: 1 } } },
@@ -237,7 +403,14 @@ export class JobQueryService {
         throw new AppError(409, "JOB_TRANSITION_INVALID", "Seçilen durum mevcut iş aşamasından sonra gelemez.", false);
       }
     }
-    const result = await db.collection("jobs").updateOne({ _id: id }, { $set: { status: input.status, updatedAt: new Date() } });
+    const now = new Date();
+    const statusFields: Document = { status: input.status, updatedAt: now };
+    if (input.clientOperationId) statusFields.lastClientOperationId = input.clientOperationId;
+    if (input.status === "IN_PROGRESS") {
+      statusFields.maintenanceStartedAt = now;
+      statusFields.maintenanceStartedByUserId = new ObjectId(principal.userId);
+    }
+    const result = await db.collection("jobs").updateOne({ _id: id }, { $set: statusFields });
     if (result.matchedCount === 0) throw new AppError(404, "JOB_NOT_FOUND", "İş bulunamadı.", false);
     if (input.status === "PAID" && job.contractorTenantId) {
       const amount = Number(job.pricingSnapshot?.contractorCost ?? 0);
@@ -304,12 +477,21 @@ export class JobQueryService {
   }
 
   private validate(input: JobInput): void {
-    if (!input.stationName?.trim() || !input.city?.trim() || !input.district?.trim() || !input.chargerExternalId?.trim()
-      || !input.chargerModel?.trim() || (input.cpoTenantId && !ObjectId.isValid(input.cpoTenantId))
+    const maintenanceTarget = this.maintenanceTarget(input);
+    const deviceInvalid = maintenanceTarget === "DEVICE" && (!input.chargerExternalId?.trim() || !input.chargerModel?.trim());
+    const stationInvalid = maintenanceTarget === "STATION" && !["GENERAL_COMPONENTS", "GRID_CONNECTION"].includes(input.stationMaintenanceArea ?? "");
+    if (!input.stationName?.trim() || !input.city?.trim() || !input.district?.trim() || deviceInvalid || stationInvalid
+      || (input.cpoTenantId && !ObjectId.isValid(input.cpoTenantId))
       || (input.cpoPrice !== null && input.cpoPrice !== undefined && (!Number.isFinite(Number(input.cpoPrice)) || Number(input.cpoPrice) <= 0))
       || (input.contractorCost !== null && input.contractorCost !== undefined && (!Number.isFinite(Number(input.contractorCost)) || Number(input.contractorCost) <= 0))) {
       throw new AppError(400, "JOB_INPUT_INVALID", "İş, firma, cihaz, tarih ve fiyat alanlarını kontrol edin.", false);
     }
+  }
+
+  private maintenanceTarget(input: JobInput): "DEVICE" | "STATION" {
+    if (input.maintenanceTarget === undefined || input.maintenanceTarget === "DEVICE") return "DEVICE";
+    if (input.maintenanceTarget === "STATION") return "STATION";
+    throw new AppError(400, "MAINTENANCE_TARGET_INVALID", "Bakım hedefini kontrol edin.", false);
   }
 
   private objectId(value: string): ObjectId {
@@ -319,6 +501,47 @@ export class JobQueryService {
 
   private assertPlatform(principal: AuthPrincipal): void {
     if (principal.tenantType !== "PLATFORM") throw new AppError(403, "PLATFORM_ACCESS_REQUIRED", "Bu işlem yalnız Bakımnerde personeline açıktır.", false);
+  }
+
+  private jobMatch(principal: AuthPrincipal): Document {
+    const tenantId = new ObjectId(principal.tenantId);
+    if (principal.tenantType === "PLATFORM") return {};
+    if (principal.tenantType === "CPO") return { cpoTenantId: tenantId };
+    return principal.role === "FIELD_WORKER"
+      ? { contractorTenantId: tenantId, fieldWorkerUserId: new ObjectId(principal.userId) }
+      : { contractorTenantId: tenantId };
+  }
+
+  private async resolveChargePoint(
+    db: Awaited<ReturnType<MongoDatabase["db"]>>,
+    cpoTenantId: ObjectId,
+    input: JobInput,
+  ): Promise<{ externalId: string; model: string; station: { name: string; city: string; district: string } }> {
+    const externalId = input.chargerExternalId!.trim();
+    const existing = await db.collection("chargePoints").findOne({ cpoTenantId, externalId });
+    if (existing) {
+      return {
+        externalId: String(existing.externalId),
+        model: String(existing.model),
+        station: {
+          name: String(existing.station?.name ?? ""),
+          city: String(existing.station?.city ?? ""),
+          district: String(existing.station?.district ?? ""),
+        },
+      };
+    }
+    const asset = {
+      externalId,
+      model: input.chargerModel!.trim(),
+      station: { name: input.stationName.trim(), city: input.city.trim(), district: input.district.trim() },
+    };
+    const now = new Date();
+    await db.collection("chargePoints").updateOne(
+      { cpoTenantId, externalId },
+      { $set: { ...asset, cpoTenantId, active: true, updatedAt: now }, $setOnInsert: { createdAt: now } },
+      { upsert: true },
+    );
+    return asset;
   }
 
   private async assertTenantTypes(

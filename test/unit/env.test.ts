@@ -31,7 +31,7 @@ describe("loadConfig", () => {
       mongodbUri: "mongodb://127.0.0.1:27017",
       mongodbDatabase: "bakimnerde",
       authTokenSecret: "development-only-change-this-secret",
-      corsOrigin: "http://127.0.0.1:4173,http://127.0.0.1:4174,http://localhost:4173,http://localhost:4174"
+      corsOrigin: "http://127.0.0.1:4173,http://127.0.0.1:4174,http://127.0.0.1:4175,http://localhost:4173,http://localhost:4174,http://localhost:4175,https://localhost"
     });
     expect(loaded.diagnostics.envFile.found).toBe(false);
     expect(loaded.diagnostics.defaultedKeys).toEqual([

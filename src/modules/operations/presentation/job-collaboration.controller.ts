@@ -8,11 +8,22 @@ import type { JobCollaborationService } from "../application/job-collaboration.s
 export class JobCollaborationController {
   public constructor(private readonly service: JobCollaborationService, private readonly audit: AuditService) {}
   public listEvidence = this.query((request, principal) => this.service.listEvidence(principal, this.jobId(request)));
+  public downloadEvidence = async (request: Request, response: Response): Promise<void> => {
+    const principal = (response as AuthenticatedResponse).locals.auth;
+    const id = (request.body as { id?: string }).id ?? "";
+    const file = await this.service.downloadEvidence(principal, id);
+    response.setHeader("content-type", file.mimeType);
+    response.setHeader("content-length", file.content.byteLength);
+    response.setHeader("content-disposition", `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`);
+    response.status(200).end(file.content);
+  };
   public addEvidence = this.mutation("JOB_EVIDENCE_ADDED", "jobMedia", (request, principal) => this.service.addEvidence(principal, request.body));
   public getFieldReport = this.query((request, principal) => this.service.getFieldReport(principal, this.jobId(request)));
   public saveFieldReport = this.mutation("JOB_FIELD_REPORT_SAVED", "jobFieldReport", (request, principal) => this.service.saveFieldReport(principal, request.body));
   public listRequests = this.query((request, principal) => this.service.listRequests(principal, this.jobId(request)));
   public createRequest = this.mutation("ADDITIONAL_REQUEST_CREATED", "additionalRequest", (request, principal) => this.service.createRequest(principal, request.body));
+  public priceRequest = this.mutation("ADDITIONAL_REQUEST_PRICED", "additionalRequest", (request, principal) => this.service.priceRequest(principal, request.body));
+  public setRequestDeadline = this.mutation("ADDITIONAL_REQUEST_DEADLINE_SET", "additionalRequest", (request, principal) => this.service.setRequestDeadline(principal, request.body));
   public updateRequest = this.mutation("ADDITIONAL_REQUEST_UPDATED", "additionalRequest", (request, principal) => this.service.updateRequest(principal, request.body));
   public listMessages = this.query((request, principal) => this.service.listMessages(principal, this.jobId(request)));
   public sendMessage = this.mutation("JOB_MESSAGE_SENT", "message", (request, principal) => this.service.sendMessage(principal, request.body));

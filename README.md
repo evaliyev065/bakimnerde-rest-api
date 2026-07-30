@@ -27,9 +27,9 @@ Health endpoint'leri `GET /health-live` ve `GET /health-ready` adreslerindedir. 
 - `POST /contractor-applications-approve`: başvurudan tenant, yönetici, profil ve cüzdan oluşturur.
 - `POST /contractor-applications-reject`: zorunlu ret nedeniyle başvuruyu sonuçlandırır.
 
-Production CORS allowlist’i admin paneli, Field PWA ve `https://contractor-registrations.bakimnerde.com` origin’lerini içermelidir.
+Production CORS allowlist’i admin paneli, Field Mobile App ve `https://contractor-registrations.bakimnerde.com` origin’lerini içermelidir.
 
-## Saha PWA sözleşmesi
+## Saha Mobile App sözleşmesi
 
 - `POST /auth-field-login`: yalnız `FIELD_WORKER` hesabına saha oturumu açar.
 - `GET /field-workers-list`: Bakımnerde veya taşeron yönetimine uygun saha personeli dropdown verisini döndürür.

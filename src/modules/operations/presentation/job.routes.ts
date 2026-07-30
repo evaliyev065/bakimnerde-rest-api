@@ -5,6 +5,11 @@ import type { JobController } from "./job.controller.js";
 
 export function registerJobRoutes(routes: RouteRegistry, controller: JobController, config: AppConfig): void {
   routes.get("/jobs-list", authenticate(config), controller.list);
+  routes.get("/jobs-summary", authenticate(config), controller.summary);
+  routes.get("/charge-points-list", authenticate(config), controller.listChargePoints);
+  routes.get("/stations-list", authenticate(config), controller.listStations);
+  routes.post("/charge-point-maintenance-list", authenticate(config), controller.listChargePointMaintenance);
+  routes.post("/station-maintenance-list", authenticate(config), controller.listStationMaintenance);
   routes.get("/field-workers-list", authenticate(config), controller.listFieldWorkers);
   routes.post("/jobs-create", authenticate(config), controller.create);
   routes.post("/jobs-update", authenticate(config), controller.update);

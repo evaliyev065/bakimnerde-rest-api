@@ -12,6 +12,26 @@ export class JobController {
     const data = await this.service.list((response as AuthenticatedResponse).locals.auth);
     response.json(success(request as ContextRequest, data));
   };
+  public summary = async (request: Request, response: Response): Promise<void> => {
+    const data = await this.service.summary((response as AuthenticatedResponse).locals.auth);
+    response.json(success(request as ContextRequest, data));
+  };
+  public listChargePoints = async (request: Request, response: Response): Promise<void> => {
+    const data = await this.service.listChargePoints((response as AuthenticatedResponse).locals.auth);
+    response.json(success(request as ContextRequest, data));
+  };
+  public listStations = async (request: Request, response: Response): Promise<void> => {
+    const data = await this.service.listStations((response as AuthenticatedResponse).locals.auth);
+    response.json(success(request as ContextRequest, data));
+  };
+  public listChargePointMaintenance = async (request: Request, response: Response): Promise<void> => {
+    const data = await this.service.listChargePointMaintenance((response as AuthenticatedResponse).locals.auth, request.body);
+    response.json(success(request as ContextRequest, data));
+  };
+  public listStationMaintenance = async (request: Request, response: Response): Promise<void> => {
+    const data = await this.service.listStationMaintenance((response as AuthenticatedResponse).locals.auth, request.body);
+    response.json(success(request as ContextRequest, data));
+  };
   public listFieldWorkers = async (request: Request, response: Response): Promise<void> => {
     const data = await this.service.listFieldWorkers((response as AuthenticatedResponse).locals.auth);
     response.json(success(request as ContextRequest, data));

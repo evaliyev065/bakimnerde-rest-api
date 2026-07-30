@@ -8,6 +8,7 @@ import { registerContractorRegistrationRoutes } from "./modules/identity/present
 import { registerUserManagementRoutes } from "./modules/identity/presentation/user-management.routes.js";
 import { registerJobRoutes } from "./modules/operations/presentation/job.routes.js";
 import { registerJobCollaborationRoutes } from "./modules/operations/presentation/job-collaboration.routes.js";
+import { registerNotificationRoutes } from "./modules/operations/presentation/notification.routes.js";
 import {
   errorHandler,
   notFoundHandler,
@@ -28,7 +29,7 @@ export function createApp(config: AppConfig, container: AppContainer): Express {
       response.setHeader("access-control-allow-origin", requestOrigin);
       response.setHeader("vary", "Origin");
     }
-    response.setHeader("access-control-allow-headers", "content-type, authorization, x-request-id");
+    response.setHeader("access-control-allow-headers", "content-type, authorization, x-request-id, idempotency-key, x-api-version");
     response.setHeader("access-control-allow-methods", "GET, POST, OPTIONS");
     if (request.method === "OPTIONS") {
       response.status(204).end();
@@ -37,7 +38,7 @@ export function createApp(config: AppConfig, container: AppContainer): Express {
     next();
   });
   app.use(rejectQueryString);
-  app.use(express.json({ limit: "1mb", strict: true }));
+  app.use(express.json({ limit: "2mb", strict: true }));
 
   const routes = new RouteRegistry(app);
   registerHealthRoutes(routes, container.healthController);
@@ -47,6 +48,7 @@ export function createApp(config: AppConfig, container: AppContainer): Express {
   registerCommerceRoutes(routes, container.commerceController, config);
   registerJobRoutes(routes, container.jobController, config);
   registerJobCollaborationRoutes(routes, container.jobCollaborationController, config);
+  registerNotificationRoutes(routes, container.notificationController, config);
 
   app.use(rejectUnsupportedBusinessMethod);
   app.use(notFoundHandler);

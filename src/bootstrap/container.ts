@@ -12,8 +12,10 @@ import { IdentityController } from "../modules/identity/presentation/identity.co
 import { UserManagementController } from "../modules/identity/presentation/user-management.controller.js";
 import { JobQueryService } from "../modules/operations/application/job-query.service.js";
 import { JobCollaborationService } from "../modules/operations/application/job-collaboration.service.js";
+import { NotificationService } from "../modules/operations/application/notification.service.js";
 import { JobCollaborationController } from "../modules/operations/presentation/job-collaboration.controller.js";
 import { JobController } from "../modules/operations/presentation/job.controller.js";
+import { NotificationController } from "../modules/operations/presentation/notification.controller.js";
 import { HealthService } from "../modules/platform-health/application/health.service.js";
 import { HealthController } from "../modules/platform-health/presentation/health.controller.js";
 
@@ -25,6 +27,7 @@ export interface AppContainer {
   readonly commerceController: CommerceController;
   readonly jobController: JobController;
   readonly jobCollaborationController: JobCollaborationController;
+  readonly notificationController: NotificationController;
   readonly database: MongoDatabase;
 }
 
@@ -46,5 +49,6 @@ export function createContainer(config: AppConfig): AppContainer {
     commerceController: new CommerceController(new CommerceService(database), auditService),
     jobController: new JobController(new JobQueryService(database), auditService),
     jobCollaborationController: new JobCollaborationController(new JobCollaborationService(database), auditService),
+    notificationController: new NotificationController(new NotificationService(database)),
   };
 }

@@ -10,7 +10,19 @@ export class MongoDatabase {
   }
 
   public db(): Promise<Db> {
-    this.connection ??= this.client.connect().then(() => this.client.db(this.config.mongodbDatabase));
+    this.connection ??= this.client.connect().then(async () => {
+      const database = this.client.db(this.config.mongodbDatabase);
+      await Promise.all([
+        database.collection("notifications").createIndex({ recipientUserId: 1, readAt: 1, createdAt: -1 }),
+        database.collection("notifications").createIndex({ jobId: 1, createdAt: -1 }),
+        database.collection("jobs").createIndex({ cpoTenantId: 1, "charger.externalId": 1, createdAt: -1 }),
+        database.collection("jobs").createIndex({ cpoTenantId: 1, maintenanceTarget: 1, "station.name": 1, "station.city": 1, "station.district": 1, createdAt: -1 }),
+        database.collection("jobs").createIndex({ contractorTenantId: 1, fieldWorkerUserId: 1, status: 1 }),
+        database.collection("additionalRequests").createIndex({ jobId: 1, partSupplyStatus: 1, createdAt: -1 }),
+        database.collection("additionalRequests").createIndex({ jobId: 1, cpoVisibleAt: 1 }),
+      ]);
+      return database;
+    });
     return this.connection;
   }
 

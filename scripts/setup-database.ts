@@ -31,9 +31,9 @@ const db = client.db(databaseName);
 const now = new Date();
 
 const collections = [
-  "tenants", "users", "contractorProfiles", "cpoProfiles", "jobs", "jobEvents", "jobMedia",
+  "tenants", "users", "contractorProfiles", "cpoProfiles", "chargePoints", "jobs", "jobEvents", "jobMedia", "jobFieldReports",
   "additionalRequests", "pricingRules", "wallets", "walletTransactions", "messages", "auditLogs", "counters",
-  "contractorApplications",
+  "contractorApplications", "notifications",
 ] as const;
 for (const name of collections) if (!(await db.listCollections({ name }).hasNext())) await db.createCollection(name);
 
@@ -43,16 +43,28 @@ await Promise.all([
   db.collection("users").createIndex({ tenantId: 1, role: 1, status: 1 }),
   db.collection("contractorProfiles").createIndex({ tenantId: 1 }, { unique: true }),
   db.collection("cpoProfiles").createIndex({ tenantId: 1 }, { unique: true }),
+  db.collection("chargePoints").createIndex({ cpoTenantId: 1, externalId: 1 }, { unique: true }),
+  db.collection("chargePoints").createIndex({ "station.city": 1, "station.district": 1, active: 1 }),
   db.collection("jobs").createIndex({ jobNumber: 1 }, { unique: true }),
   db.collection("jobs").createIndex({ cpoTenantId: 1, status: 1, createdAt: -1 }),
   db.collection("jobs").createIndex({ contractorTenantId: 1, status: 1, appointmentAt: 1 }),
+  db.collection("jobs").createIndex({ cpoTenantId: 1, "charger.externalId": 1, createdAt: -1 }),
+  db.collection("jobs").createIndex({ cpoTenantId: 1, maintenanceTarget: 1, "station.name": 1, "station.city": 1, "station.district": 1, createdAt: -1 }),
+  db.collection("jobs").createIndex({ contractorTenantId: 1, fieldWorkerUserId: 1, status: 1 }),
   db.collection("jobEvents").createIndex({ jobId: 1, createdAt: 1 }),
   db.collection("jobMedia").createIndex({ jobId: 1, cycle: 1, phase: 1, createdAt: 1 }),
-  db.collection("additionalRequests").createIndex({ jobId: 1, status: 1 }),
+  db.collection("jobMedia").createIndex({ clientOperationId: 1 }, { unique: true, sparse: true }),
+  db.collection("jobFieldReports").createIndex({ jobId: 1, cycle: 1 }, { unique: true }),
+  db.collection("additionalRequests").createIndex({ jobId: 1, partSupplyStatus: 1, createdAt: -1 }),
+  db.collection("additionalRequests").createIndex({ jobId: 1, cpoVisibleAt: 1 }),
+  db.collection("additionalRequests").createIndex({ clientOperationId: 1 }, { unique: true, sparse: true }),
   db.collection("pricingRules").createIndex({ ownerTenantId: 1, counterpartyTenantId: 1, itemCode: 1 }, { unique: true }),
   db.collection("wallets").createIndex({ tenantId: 1 }, { unique: true }),
   db.collection("walletTransactions").createIndex({ walletId: 1, createdAt: -1 }),
   db.collection("messages").createIndex({ jobId: 1, createdAt: 1 }),
+  db.collection("messages").createIndex({ clientOperationId: 1 }, { unique: true, sparse: true }),
+  db.collection("notifications").createIndex({ recipientUserId: 1, readAt: 1, createdAt: -1 }),
+  db.collection("notifications").createIndex({ jobId: 1, createdAt: -1 }),
   db.collection("auditLogs").createIndex({ tenantId: 1, createdAt: -1 }),
   db.collection("auditLogs").createIndex({ createdAt: 1 }, { expireAfterSeconds: 63072000 }),
   db.collection("contractorApplications").createIndex({ applicationNumber: 1 }, { unique: true }),
@@ -109,6 +121,18 @@ for (const user of users) {
 const platformId = tenantIds.get("bakimnerde")!;
 const cpoId = tenantIds.get("voltgo")!;
 const contractorId = tenantIds.get("marmara-teknik")!;
+const chargePointSeeds = [
+  { externalId: "TR-VGE-3482", model: "VX-180", station: { name: "İstanbul Havalimanı P3", city: "İstanbul", district: "Arnavutköy" } },
+  { externalId: "TR-VGE-2901", model: "VX-120", station: { name: "Nilüfer Plaza", city: "Bursa", district: "Nilüfer" } },
+  { externalId: "TR-VGE-4410", model: "VX-180", station: { name: "Gebze Teknoloji Vadisi", city: "Kocaeli", district: "Gebze" } },
+] as const;
+for (const chargePoint of chargePointSeeds) {
+  await db.collection("chargePoints").updateOne(
+    { cpoTenantId: cpoId, externalId: chargePoint.externalId },
+    { $set: { ...chargePoint, cpoTenantId: cpoId, active: true, updatedAt: now }, $setOnInsert: { createdAt: now } },
+    { upsert: true },
+  );
+}
 await db.collection("cpoProfiles").updateOne({ tenantId: cpoId }, { $set: { tenantId: cpoId, agreementType: "JOB_BASED", stationCount: 184, privatePolicy: { paymentTermDays: 14 }, updatedAt: now } }, { upsert: true });
 await db.collection("contractorProfiles").updateOne({ tenantId: contractorId }, { $set: { tenantId: contractorId, serviceRegions: ["İstanbul", "Bursa", "Kocaeli"], availabilityDays: [1, 2, 3, 4, 5, 6], maintenanceBaseCost: 6500, contractApproval: { status: "APPROVED", approvedAt: now, documentUrl: "/contracts/marmara-teknik.pdf" }, privatePolicy: { paymentTermDays: 7 }, updatedAt: now } }, { upsert: true });
 await db.collection("wallets").updateOne({ tenantId: contractorId }, { $set: { tenantId: contractorId, type: "CLOSED", currency: "TRY", balance: 128400, blockedBalance: 17600, updatedAt: now }, $setOnInsert: { createdAt: now } }, { upsert: true });
