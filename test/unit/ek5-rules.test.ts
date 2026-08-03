@@ -72,19 +72,19 @@ describe("Ek5 ek tedarik akışı", () => {
   });
 
   it("aynı manuel tedarik durumunu ikinci kez DB'ye yazmaz", async () => {
-    const platform = principal("PLATFORM", "PLATFORM_STAFF");
+    const cpo = principal("CPO", "CPO_STAFF");
     const jobId = new ObjectId();
     const requestId = new ObjectId();
     let updateCount = 0;
     const database = databaseWithCollections({
-      jobs: { findOne: async () => ({ _id: jobId, cpoTenantId: new ObjectId(), contractorTenantId: new ObjectId() }) },
+      jobs: { findOne: async () => ({ _id: jobId, cpoTenantId: new ObjectId(cpo.tenantId), contractorTenantId: new ObjectId() }) },
       additionalRequests: {
-        findOne: async () => ({ _id: requestId, jobId, partSupplyStatus: "DELAYED", supplyDeadlineAt: new Date() }),
+        findOne: async () => ({ _id: requestId, jobId, partSupplyStatus: "DELAYED", supplyDeadlineAt: new Date(), cpoVisibleAt: new Date() }),
         updateOne: async () => { updateCount += 1; return { matchedCount: 1 }; },
       },
     });
 
-    const result = await new JobCollaborationService(database).updateRequest(platform, {
+    const result = await new JobCollaborationService(database).updateRequest(cpo, {
       id: requestId.toHexString(), partSupplyStatus: "DELAYED",
     });
 

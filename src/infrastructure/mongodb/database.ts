@@ -20,6 +20,10 @@ export class MongoDatabase {
         database.collection("jobs").createIndex({ contractorTenantId: 1, fieldWorkerUserId: 1, status: 1 }),
         database.collection("additionalRequests").createIndex({ jobId: 1, partSupplyStatus: 1, createdAt: -1 }),
         database.collection("additionalRequests").createIndex({ jobId: 1, cpoVisibleAt: 1 }),
+        database.collection("walletTransactions").createIndex(
+          { jobId: 1, type: 1 },
+          { unique: true, partialFilterExpression: { jobId: { $type: "objectId" }, type: { $type: "string" } } },
+        ),
       ]);
       return database;
     });

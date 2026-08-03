@@ -16,5 +16,7 @@ export function registerJobRoutes(routes: RouteRegistry, controller: JobControll
   routes.post("/jobs-status-change", authenticate(config), controller.changeStatus);
   routes.post("/jobs-assignment-accept", authenticate(config), controller.acceptAssignment);
   routes.post("/jobs-field-worker-assign", authenticate(config), controller.assignFieldWorker);
+  routes.post("/jobs-payment-cpo", authenticate(config), controller.payCpoInvoice);
+  routes.post("/jobs-payment-contractor", authenticate(config), controller.payContractor);
   routes.post("/jobs-delete", authenticate(config), controller.delete);
 }

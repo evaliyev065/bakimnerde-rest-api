@@ -42,6 +42,8 @@ export class JobController {
   public changeStatus = this.mutation("JOB_STATUS_CHANGED", (request, principal) => this.service.changeStatus(principal, request.body));
   public acceptAssignment = this.mutation("JOB_ASSIGNMENT_ACCEPTED", (request, principal) => this.service.acceptAssignment(principal, request.body));
   public assignFieldWorker = this.mutation("FIELD_WORKER_ASSIGNED", (request, principal) => this.service.assignFieldWorker(principal, request.body));
+  public payCpoInvoice = this.mutation("CPO_TO_PLATFORM_PAID", (request, principal) => this.service.payCpoInvoice(principal, request.body));
+  public payContractor = this.mutation("PLATFORM_TO_CONTRACTOR_PAID", (request, principal) => this.service.payContractor(principal, request.body));
   public delete = this.mutation("JOB_DELETED", (request, principal) => this.service.delete(principal, (request.body as { id?: string }).id ?? ""));
 
   private mutation(action: string, handler: (request: Request, principal: AuthenticatedResponse["locals"]["auth"]) => Promise<Record<string, unknown>>) {

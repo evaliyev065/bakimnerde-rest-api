@@ -61,6 +61,10 @@ await Promise.all([
   db.collection("pricingRules").createIndex({ ownerTenantId: 1, counterpartyTenantId: 1, itemCode: 1 }, { unique: true }),
   db.collection("wallets").createIndex({ tenantId: 1 }, { unique: true }),
   db.collection("walletTransactions").createIndex({ walletId: 1, createdAt: -1 }),
+  db.collection("walletTransactions").createIndex(
+    { jobId: 1, type: 1 },
+    { unique: true, partialFilterExpression: { jobId: { $type: "objectId" }, type: { $type: "string" } } },
+  ),
   db.collection("messages").createIndex({ jobId: 1, createdAt: 1 }),
   db.collection("messages").createIndex({ clientOperationId: 1 }, { unique: true, sparse: true }),
   db.collection("notifications").createIndex({ recipientUserId: 1, readAt: 1, createdAt: -1 }),
@@ -86,8 +90,8 @@ if (await db.listCollections({ name: "manufacturerProfiles" }).hasNext()) await 
 
 const tenantSeeds = [
   { tenantKey: "bakimnerde", name: "Bakımnerde", type: "PLATFORM", email: "admin@bakimnerde.com", phone: "8500000000", immutable: true },
-  { tenantKey: "voltgo", name: "VoltGo Enerji", type: "CPO", email: "operasyon@voltgo.test", phone: "5325552020", immutable: false },
-  { tenantKey: "marmara-teknik", name: "Marmara Teknik", type: "CONTRACTOR", email: "yonetici@marmarateknik.test", phone: "5325553030", immutable: false },
+  { tenantKey: "wattarya", name: "Wattarya", type: "CPO", email: "operasyon@wattarya.test", phone: "5325552020", immutable: false },
+  { tenantKey: "wattarya-teknik", name: "WattaryaTeknik", type: "CONTRACTOR", email: "yonetici@wattaryateknik.test", phone: "5325553030", immutable: false },
 ] as const;
 const tenantIds = new Map<string, ObjectId>();
 for (const seed of tenantSeeds) {
@@ -104,11 +108,11 @@ const password = process.env.DB_SEED_PASSWORD ?? "Bakimnerde!2026";
 const users = [
   { tenantKey: "bakimnerde", email: "admin@bakimnerde.com", name: "Bakımnerde Ana Hesap", role: "PLATFORM_OWNER", phone: "8500000001" },
   { tenantKey: "bakimnerde", email: "personel@bakimnerde.com", name: "Elif Arslan", role: "PLATFORM_STAFF", phone: "5320000001" },
-  { tenantKey: "voltgo", email: "operasyon@voltgo.test", name: "Melis Demir", role: "CPO_ADMIN", phone: "5321110001" },
-  { tenantKey: "voltgo", email: "personel@voltgo.test", name: "Cem Koç", role: "CPO_STAFF", phone: "5321110002" },
-  { tenantKey: "marmara-teknik", email: "yonetici@marmarateknik.test", name: "Burak Yılmaz", role: "CONTRACTOR_ADMIN", phone: "5322220001" },
-  { tenantKey: "marmara-teknik", email: "operasyon@marmarateknik.test", name: "Seda Özkan", role: "CONTRACTOR_STAFF", phone: "5322220002" },
-  { tenantKey: "marmara-teknik", email: "saha@marmarateknik.test", name: "Ahmet Kaya", role: "FIELD_WORKER", phone: "5322220003" },
+  { tenantKey: "wattarya", email: "operasyon@wattarya.test", name: "Melis Demir", role: "CPO_ADMIN", phone: "5321110001" },
+  { tenantKey: "wattarya", email: "personel@wattarya.test", name: "Cem Koç", role: "CPO_STAFF", phone: "5321110002" },
+  { tenantKey: "wattarya-teknik", email: "yonetici@wattaryateknik.test", name: "Burak Yılmaz", role: "CONTRACTOR_ADMIN", phone: "5322220001" },
+  { tenantKey: "wattarya-teknik", email: "operasyon@wattaryateknik.test", name: "Seda Özkan", role: "CONTRACTOR_STAFF", phone: "5322220002" },
+  { tenantKey: "wattarya-teknik", email: "saha@wattaryateknik.test", name: "Ahmet Kaya", role: "FIELD_WORKER", phone: "5322220003" },
 ] as const;
 for (const user of users) {
   await db.collection("users").updateOne(
@@ -119,8 +123,8 @@ for (const user of users) {
 }
 
 const platformId = tenantIds.get("bakimnerde")!;
-const cpoId = tenantIds.get("voltgo")!;
-const contractorId = tenantIds.get("marmara-teknik")!;
+const cpoId = tenantIds.get("wattarya")!;
+const contractorId = tenantIds.get("wattarya-teknik")!;
 const chargePointSeeds = [
   { externalId: "TR-VGE-3482", model: "VX-180", station: { name: "İstanbul Havalimanı P3", city: "İstanbul", district: "Arnavutköy" } },
   { externalId: "TR-VGE-2901", model: "VX-120", station: { name: "Nilüfer Plaza", city: "Bursa", district: "Nilüfer" } },
@@ -134,7 +138,7 @@ for (const chargePoint of chargePointSeeds) {
   );
 }
 await db.collection("cpoProfiles").updateOne({ tenantId: cpoId }, { $set: { tenantId: cpoId, agreementType: "JOB_BASED", stationCount: 184, privatePolicy: { paymentTermDays: 14 }, updatedAt: now } }, { upsert: true });
-await db.collection("contractorProfiles").updateOne({ tenantId: contractorId }, { $set: { tenantId: contractorId, serviceRegions: ["İstanbul", "Bursa", "Kocaeli"], availabilityDays: [1, 2, 3, 4, 5, 6], maintenanceBaseCost: 6500, contractApproval: { status: "APPROVED", approvedAt: now, documentUrl: "/contracts/marmara-teknik.pdf" }, privatePolicy: { paymentTermDays: 7 }, updatedAt: now } }, { upsert: true });
+await db.collection("contractorProfiles").updateOne({ tenantId: contractorId }, { $set: { tenantId: contractorId, serviceRegions: ["İstanbul", "Bursa", "Kocaeli"], activityAreas: ["PERIODIC_MAINTENANCE", "ELECTRICAL", "ELECTRONICS"], specialties: ["PERIODIC_MAINTENANCE", "ELECTRICAL", "ELECTRONICS"], availabilityDays: [1, 2, 3, 4, 5, 6], maintenanceBaseCost: 6500, contractApproval: { status: "APPROVED", approvedAt: now, documentUrl: "/contracts/wattarya-teknik.pdf" }, privatePolicy: { paymentTermDays: 7 }, updatedAt: now } }, { upsert: true });
 await db.collection("wallets").updateOne({ tenantId: contractorId }, { $set: { tenantId: contractorId, type: "CLOSED", currency: "TRY", balance: 128400, blockedBalance: 17600, updatedAt: now }, $setOnInsert: { createdAt: now } }, { upsert: true });
 await db.collection("wallets").updateOne({ tenantId: cpoId }, { $set: { tenantId: cpoId, type: "CLOSED", currency: "TRY", balance: 420000, blockedBalance: 0, updatedAt: now }, $setOnInsert: { createdAt: now } }, { upsert: true });
 
@@ -152,7 +156,7 @@ const sampleJob = await db.collection("jobs").findOneAndUpdate({ jobNumber: "BN-
   createdByTenantId: cpoId, updatedAt: now,
 }, $setOnInsert: { _id: sampleJobId, jobNumber: "BN-2481", createdAt: now } }, { upsert: true, returnDocument: "after" });
 if (sampleJob?._id) {
-  const fieldUser = await db.collection("users").findOne({ emailNormalized: "saha@marmarateknik.test" });
+  const fieldUser = await db.collection("users").findOne({ emailNormalized: "saha@wattaryateknik.test" });
   await Promise.all([
     db.collection("jobMedia").deleteMany({ jobId: sampleJob._id }),
     db.collection("jobFieldReports").deleteMany({ jobId: sampleJob._id }),

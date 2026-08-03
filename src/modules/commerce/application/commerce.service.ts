@@ -90,7 +90,7 @@ export class CommerceService {
     ]).toArray();
   }
 
-  public async adjustWallet(principal: AuthPrincipal, input: { tenantId: string; amount: number; description: string; reference?: string }): Promise<{ transactionId: string; balance: number }> {
+  public async adjustWallet(principal: AuthPrincipal, input: { tenantId: string; amount: number; description: string }): Promise<{ transactionId: string; balance: number }> {
     this.assertPlatform(principal);
     if (!Number.isFinite(input.amount) || input.amount === 0 || !input.description?.trim()) {
       throw new AppError(400, "WALLET_ADJUSTMENT_INVALID", "Tutar sıfırdan farklı olmalı ve açıklama girilmelidir.", false);
@@ -108,7 +108,7 @@ export class CommerceService {
     await db.collection("walletTransactions").insertOne({
       _id: transactionId, walletId: wallet._id, tenantId, amount: Number(input.amount),
       direction: input.amount > 0 ? "CREDIT" : "DEBIT", description: input.description.trim(),
-      reference: input.reference?.trim() ?? "", createdByUserId: new ObjectId(principal.userId), createdAt: now,
+      createdByUserId: new ObjectId(principal.userId), createdAt: now,
     });
     return { transactionId: transactionId.toHexString(), balance: nextBalance };
   }
@@ -123,7 +123,7 @@ export class CommerceService {
       { $project: {
         id: { $toString: "$_id" }, _id: 0, tenantId: { $toString: "$tenantId" },
         tenantName: { $ifNull: [{ $first: "$tenant.name" }, "Bilinmeyen firma"] },
-        amount: 1, direction: 1, description: 1, reference: 1, createdAt: 1,
+        amount: 1, direction: 1, description: 1, createdAt: 1,
       } },
     ]).toArray();
   }

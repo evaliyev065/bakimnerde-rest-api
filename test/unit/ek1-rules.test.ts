@@ -40,7 +40,7 @@ describe("Ek1 iş kuralları", () => {
     const userId = new ObjectId();
     let inserted: Document | undefined;
     const database = databaseWithCollections({
-      jobs: { findOne: async () => ({ _id: jobId, contractorTenantId: tenantId, fieldWorkerUserId: userId, workflowCycle: 1 }) },
+      jobs: { findOne: async () => ({ _id: jobId, contractorTenantId: tenantId, fieldWorkerUserId: userId, workflowCycle: 1, status: "ASSIGNED" }) },
       jobMedia: {
         findOne: async () => null,
         countDocuments: async () => 0,
@@ -76,4 +76,3 @@ function cursor(items: Document[]) {
     async toArray() { return values; },
   };
 }
-

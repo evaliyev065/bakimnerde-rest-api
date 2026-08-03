@@ -45,7 +45,8 @@ export class JobQueryService {
         stationMaintenanceArea: { $ifNull: ["$stationMaintenanceArea", null] },
         charger: "$charger.externalId", chargerModel: "$charger.model", status: 1, appointmentAt: 1,
         assignmentAcceptanceDeadlineAt: 1, contractorAcceptedAt: 1, outageNotificationSentAt: 1,
-        maintenanceStartedAt: 1,
+        assignmentAt: 1, fieldWorkerAssignedAt: 1, maintenanceStartedAt: 1, maintenanceCompletedAt: 1,
+        platformApprovedAt: 1, cpoApprovedAt: 1, cpoToPlatformPaidAt: 1, contractorPaidAt: 1, closedAt: 1,
         maintenanceStartedByUserId: { $cond: [{ $ifNull: ["$maintenanceStartedByUserId", false] }, { $toString: "$maintenanceStartedByUserId" }, null] },
         workflowCycle: { $ifNull: ["$workflowCycle", 1] },
         deadlineAt: "$publishDeadlineAt", cpoTenantId: { $toString: "$cpoTenantId" },
@@ -53,10 +54,10 @@ export class JobQueryService {
         fieldWorkerUserId: { $cond: [{ $ifNull: ["$fieldWorkerUserId", false] }, { $toString: "$fieldWorkerUserId" }, null] },
         fieldWorkerName: { $ifNull: [{ $first: "$fieldWorker.name" }, null] },
         fieldWorkerPhone: { $ifNull: [{ $first: "$fieldWorker.phone" }, null] },
-        cpo: { $ifNull: [{ $first: "$cpo.name" }, "CPO Firma"] },
+        cpo: { $ifNull: [{ $first: "$cpo.name" }, "Wattarya"] },
         contractor: principal.tenantType === "PLATFORM"
           ? { $ifNull: [{ $first: "$contractor.name" }, "Atanmadı"] }
-          : { $literal: "Bakımnerde Saha Ağı" },
+          : { $literal: "WattaryaTeknik" },
         amount: assignedAmount,
         contractorCost: principal.tenantType === "PLATFORM"
           ? { $cond: [{ $gt: [{ $ifNull: ["$pricingSnapshot.contractorCost", 0] }, 0] }, "$pricingSnapshot.contractorCost", null] }
@@ -375,6 +376,13 @@ export class JobQueryService {
       if (input.status === "IN_PROGRESS" && (job.status !== "ASSIGNED" || !job.contractorAcceptedAt || !job.appointmentAt || job.appointmentAt > new Date())) {
         throw new AppError(409, "APPOINTMENT_NOT_READY", "İş ancak onaylanan randevu zamanı geldiğinde başlatılabilir.", false);
       }
+      if (input.status === "IN_PROGRESS") {
+        const cycle = Number(job.workflowCycle ?? 1);
+        const beforeCount = await db.collection("jobMedia").countDocuments({ jobId: id, cycle, phase: "BEFORE" });
+        if (beforeCount !== Number(job.evidencePolicy?.beforePhotoCount ?? 6)) {
+          throw new AppError(409, "BEFORE_EVIDENCE_INCOMPLETE", "Bakıma başlamak için 6 bakım öncesi fotoğrafını yükleyin.", false);
+        }
+      }
       if (input.status === "MAINTENANCE_DONE") {
         if (job.status !== "IN_PROGRESS") throw new AppError(409, "JOB_TRANSITION_INVALID", "Bakım tamamlanmadan önce işlem başlatılmalıdır.", false);
         const unresolvedSupplyCount = await db.collection("additionalRequests").countDocuments({ jobId: id, partSupplyStatus: { $ne: "SUPPLIED" } });
@@ -397,7 +405,6 @@ export class JobQueryService {
     } else {
       const allowedPlatformTransition =
         (job.status === "MAINTENANCE_DONE" && input.status === "MAINTENANCE_APPROVED")
-        || (job.status === "CPO_APPROVAL" && input.status === "PAID")
         || (job.status === "PAID" && input.status === "CLOSED");
       if (!allowedPlatformTransition) {
         throw new AppError(409, "JOB_TRANSITION_INVALID", "Seçilen durum mevcut iş aşamasından sonra gelemez.", false);
@@ -410,23 +417,73 @@ export class JobQueryService {
       statusFields.maintenanceStartedAt = now;
       statusFields.maintenanceStartedByUserId = new ObjectId(principal.userId);
     }
+    if (input.status === "MAINTENANCE_DONE") statusFields.maintenanceCompletedAt = now;
+    if (input.status === "MAINTENANCE_APPROVED") statusFields.platformApprovedAt = now;
+    if (input.status === "CPO_APPROVAL") statusFields.cpoApprovedAt = now;
+    if (input.status === "CLOSED") statusFields.closedAt = now;
     const result = await db.collection("jobs").updateOne({ _id: id }, { $set: statusFields });
     if (result.matchedCount === 0) throw new AppError(404, "JOB_NOT_FOUND", "İş bulunamadı.", false);
-    if (input.status === "PAID" && job.contractorTenantId) {
-      const amount = Number(job.pricingSnapshot?.contractorCost ?? 0);
-      const now = new Date();
-      await db.collection("wallets").updateOne(
+    await this.event(db, id, principal, "JOB_STATUS_CHANGED", input.status, input.note);
+    return { id: input.id, status: input.status };
+  }
+
+  public async payCpoInvoice(principal: AuthPrincipal, input: { id: string }): Promise<{ id: string; status: "CPO_TO_PLATFORM_PAID" }> {
+    if (principal.tenantType !== "CPO" || !["CPO_ADMIN", "CPO_STAFF"].includes(principal.role)) {
+      throw new AppError(403, "CPO_PAYMENT_FORBIDDEN", "Bakımnerde ücretini yalnız ilgili CPO ödeyebilir.", false);
+    }
+    const id = this.objectId(input.id);
+    const db = await this.database.db();
+    const job = await db.collection("jobs").findOne({ _id: id, cpoTenantId: new ObjectId(principal.tenantId) });
+    if (job === null) throw new AppError(404, "JOB_NOT_FOUND", "İş bulunamadı.", false);
+    if (job.cpoToPlatformPaidAt) return { id: input.id, status: "CPO_TO_PLATFORM_PAID" };
+    if (job.status !== "CPO_APPROVAL") throw new AppError(409, "CPO_PAYMENT_NOT_READY", "CPO onayı tamamlanmadan ödeme yapılamaz.", false);
+    const amount = Number(job.pricingSnapshot?.cpoPrice ?? 0);
+    if (amount <= 0) throw new AppError(409, "CPO_PRICE_REQUIRED", "Bakımnerde ücreti belirlenmeden ödeme yapılamaz.", false);
+    const wallet = await db.collection("wallets").findOne({ tenantId: job.cpoTenantId });
+    if (wallet === null || Number(wallet.balance ?? 0) < amount) throw new AppError(409, "WALLET_BALANCE_INSUFFICIENT", "CPO bakiyesi bu ödeme için yetersiz.", false);
+    const now = new Date();
+    await Promise.all([
+      db.collection("wallets").updateOne({ _id: wallet._id, balance: { $gte: amount } }, { $inc: { balance: -amount }, $set: { updatedAt: now } }),
+      db.collection("walletTransactions").updateOne(
+        { jobId: id, type: "CPO_TO_PLATFORM_PAYMENT" },
+        { $setOnInsert: { tenantId: job.cpoTenantId, jobId: id, type: "CPO_TO_PLATFORM_PAYMENT", amount: -amount, direction: "DEBIT", currency: "TRY", description: `${job.jobNumber} Bakımnerde ödemesi`, createdByUserId: new ObjectId(principal.userId), createdAt: now } },
+        { upsert: true },
+      ),
+      db.collection("jobs").updateOne({ _id: id, cpoToPlatformPaidAt: { $exists: false } }, { $set: { cpoToPlatformPaidAt: now, cpoPaymentAmount: amount, updatedAt: now } }),
+    ]);
+    await this.event(db, id, principal, "CPO_TO_PLATFORM_PAID", String(job.status));
+    return { id: input.id, status: "CPO_TO_PLATFORM_PAID" };
+  }
+
+  public async payContractor(principal: AuthPrincipal, input: { id: string }): Promise<{ id: string; status: "PAID" }> {
+    this.assertPlatform(principal);
+    const id = this.objectId(input.id);
+    const db = await this.database.db();
+    const job = await db.collection("jobs").findOne({ _id: id });
+    if (job === null) throw new AppError(404, "JOB_NOT_FOUND", "İş bulunamadı.", false);
+    if (job.contractorPaidAt && job.status === "PAID") return { id: input.id, status: "PAID" };
+    if (job.status !== "CPO_APPROVAL" || !job.cpoToPlatformPaidAt) {
+      throw new AppError(409, "CONTRACTOR_PAYMENT_NOT_READY", "CPO ödemesi alınmadan teknik servis ödemesi yapılamaz.", false);
+    }
+    if (!job.contractorTenantId) throw new AppError(409, "CONTRACTOR_REQUIRED", "İşe atanmış teknik servis bulunamadı.", false);
+    const amount = Number(job.pricingSnapshot?.contractorCost ?? 0);
+    if (amount <= 0) throw new AppError(409, "CONTRACTOR_PRICE_REQUIRED", "Teknik servis ücreti belirlenmeden ödeme yapılamaz.", false);
+    const now = new Date();
+    await Promise.all([
+      db.collection("wallets").updateOne(
         { tenantId: job.contractorTenantId },
         { $inc: { balance: amount }, $set: { updatedAt: now }, $setOnInsert: { type: "CLOSED", currency: "TRY", blockedBalance: 0, createdAt: now } },
         { upsert: true },
-      );
-      await db.collection("walletTransactions").insertOne({
-        tenantId: job.contractorTenantId, jobId: id, type: "EARNING", amount, currency: "TRY",
-        description: `${job.jobNumber} hakedişi`, createdByUserId: new ObjectId(principal.userId), createdAt: now,
-      });
-    }
-    await this.event(db, id, principal, "JOB_STATUS_CHANGED", input.status, input.note);
-    return { id: input.id, status: input.status };
+      ),
+      db.collection("walletTransactions").updateOne(
+        { jobId: id, type: "PLATFORM_TO_CONTRACTOR_PAYMENT" },
+        { $setOnInsert: { tenantId: job.contractorTenantId, jobId: id, type: "PLATFORM_TO_CONTRACTOR_PAYMENT", amount, direction: "CREDIT", currency: "TRY", description: `${job.jobNumber} teknik servis ödemesi`, createdByUserId: new ObjectId(principal.userId), createdAt: now } },
+        { upsert: true },
+      ),
+      db.collection("jobs").updateOne({ _id: id, contractorPaidAt: { $exists: false } }, { $set: { status: "PAID", contractorPaidAt: now, contractorPaymentAmount: amount, updatedAt: now } }),
+    ]);
+    await this.event(db, id, principal, "PLATFORM_TO_CONTRACTOR_PAID", "PAID");
+    return { id: input.id, status: "PAID" };
   }
 
   public async acceptAssignment(principal: AuthPrincipal, input: { id: string; appointmentAt: string }): Promise<{ id: string; appointmentAt: Date }> {

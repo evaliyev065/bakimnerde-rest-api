@@ -54,6 +54,16 @@ export class IdentityController {
     const data = await this.tenantService.list((response as AuthenticatedResponse).locals.auth);
     response.json(success(request as ContextRequest, data));
   };
+  public ownTenantProfile = async (request: Request, response: Response): Promise<void> => {
+    const data = await this.tenantService.ownProfile((response as AuthenticatedResponse).locals.auth);
+    response.json(success(request as ContextRequest, data));
+  };
+  public updateOwnCoverage = async (request: Request, response: Response): Promise<void> => {
+    const principal = (response as AuthenticatedResponse).locals.auth;
+    const data = await this.tenantService.updateOwnCoverage(principal, request.body as { serviceRegions: string[]; activityAreas: string[] });
+    await this.auditService.record({ principal, action: "CONTRACTOR_COVERAGE_UPDATED", resourceType: "tenant", resourceId: data.id, requestId: (request as ContextRequest).context.requestId, ipAddress: request.ip ?? "unknown" });
+    response.json(success(request as ContextRequest, data));
+  };
 
   public createTenant = async (request: Request, response: Response): Promise<void> => {
     const principal = (response as AuthenticatedResponse).locals.auth;

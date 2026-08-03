@@ -20,8 +20,8 @@ Komut idempotenttir; 3+1 rol modelini, koleksiyonları ve indexleri kurar. Eski 
 Örnek girişler:
 
 - Bakımnerde özel kanal: `admin@bakimnerde.com`
-- CPO şirket kanalı: `operasyon@voltgo.test`
-- Taşeron yönetimi: `yonetici@marmarateknik.test`
-- Mobil saha kanalı: `saha@marmarateknik.test`
+- CPO şirket kanalı: `operasyon@wattarya.test`
+- Taşeron yönetimi: `yonetici@wattaryateknik.test`
+- Mobil saha kanalı: `saha@wattaryateknik.test`
 
 Tüm örnek hesapların parolası `Bakimnerde!2026` değeridir.

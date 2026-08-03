@@ -10,6 +10,8 @@ export function registerIdentityRoutes(routes: RouteRegistry, controller: Identi
   routes.post("/auth-field-login", controller.fieldLogin);
   routes.get("/auth-me", authenticated, controller.me);
   routes.get("/tenants-list", authenticated, controller.listTenants);
+  routes.get("/tenant-profile", authenticated, controller.ownTenantProfile);
+  routes.post("/tenant-coverage-update", authenticated, controller.updateOwnCoverage);
   routes.post("/tenants-create", authenticated, controller.createTenant);
   routes.post("/tenants-update", authenticated, controller.updateTenant);
   routes.post("/tenants-delete", authenticated, controller.deleteTenant);

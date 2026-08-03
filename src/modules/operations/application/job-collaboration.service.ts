@@ -14,6 +14,8 @@ const FIELD_REPORT_OPTIONS = {
 const ADDITIONAL_SUPPLY_TYPES = new Set(["FAN_REPLACEMENT", "CABLE_REPLACEMENT", "CONNECTOR_REPLACEMENT", "OTHER_SUPPLY"]);
 const MANUAL_SUPPLY_STATUSES = new Set(["DELAYED", "SUPPLIED"]);
 
+interface ZipEntry { name: string; content: Buffer }
+
 interface FieldReportInput {
   jobId: string;
   serviceType: string;
@@ -63,6 +65,29 @@ export class JobCollaborationService {
     };
   }
 
+  public async downloadAllEvidence(principal: AuthPrincipal, jobIdValue: string): Promise<{ content: Buffer; mimeType: string; fileName: string }> {
+    const { db, jobId, job } = await this.authorizedJob(principal, jobIdValue);
+    const cycle = Number(job.workflowCycle ?? 1);
+    const evidence = await db.collection("jobMedia").find({ jobId, cycle }).sort({ createdAt: 1 }).toArray();
+    const entries: ZipEntry[] = evidence.flatMap((item, index) => {
+      const mimeType = String(item.mimeType ?? "");
+      const contentBase64 = String(item.contentBase64 ?? "");
+      if (!["image/jpeg", "image/png", "image/webp"].includes(mimeType) || !contentBase64) return [];
+      const extension = mimeType === "image/png" ? "png" : mimeType === "image/webp" ? "webp" : "jpg";
+      const phase = String(item.phase ?? "PHOTO").toLocaleLowerCase("tr-TR");
+      const supplied = String(item.fileName ?? "").replace(/[^a-zA-Z0-9._-]/g, "-").slice(-120);
+      return [{ name: `${String(index + 1).padStart(2, "0")}-${phase}-${supplied || `${item._id.toHexString()}.${extension}`}`, content: Buffer.from(contentBase64, "base64") }];
+    });
+    if (entries.length === 0) {
+      throw new AppError(409, "JOB_EVIDENCE_DOWNLOAD_UNAVAILABLE", "İndirilebilir saha fotoğrafı bulunamadı.", false);
+    }
+    return {
+      content: createStoredZip(entries),
+      mimeType: "application/zip",
+      fileName: `${String(job.jobNumber ?? jobIdValue)}-saha-fotograflari.zip`,
+    };
+  }
+
   public async addEvidence(principal: AuthPrincipal, input: { jobId: string; phase: "BEFORE" | "AFTER" | "BRANDED"; contentBase64?: string; mimeType?: string; fileName?: string; url?: string; description: string; clientOperationId?: string }): Promise<{ id: string }> {
     if (principal.role !== "FIELD_WORKER") throw new AppError(403, "FIELD_WORKER_REQUIRED", "Bakım kanıtını yalnız saha ekibi yükleyebilir.", false);
     const url = input.url?.trim() ?? "";
@@ -76,6 +101,16 @@ export class JobCollaborationService {
       throw new AppError(400, "EVIDENCE_INPUT_INVALID", "Kanıt aşaması ve dosya adresi gereklidir.", false);
     }
     const { db, jobId, job } = await this.authorizedJob(principal, input.jobId);
+    if (input.phase === "BEFORE" && job.maintenanceStartedAt) {
+      throw new AppError(409, "BEFORE_EVIDENCE_PHASE_CLOSED", "Bakım başladıktan sonra bakım öncesi fotoğrafı eklenemez.", false);
+    }
+    if (input.phase !== "BEFORE" && !job.maintenanceStartedAt) {
+      throw new AppError(409, "MAINTENANCE_START_REQUIRED", "Form ve bakım sonrası fotoğrafları için önce Bakımı Başlat işlemini tamamlayın.", false);
+    }
+    if ((input.phase === "BEFORE" && job.status !== "ASSIGNED")
+      || (input.phase !== "BEFORE" && !["IN_PROGRESS", "ADDITIONAL_SUPPLY"].includes(String(job.status)))) {
+      throw new AppError(409, "EVIDENCE_PHASE_CLOSED", "Bu iş aşamasında seçilen fotoğraf türü artık yüklenemez.", false);
+    }
     if (input.clientOperationId) {
       const existing = await db.collection("jobMedia").findOne({ clientOperationId: input.clientOperationId, uploadedByUserId: new ObjectId(principal.userId) });
       if (existing?._id) return { id: existing._id.toHexString() };
@@ -108,8 +143,8 @@ export class JobCollaborationService {
     }
     this.validateFieldReport(input);
     const { db, jobId, job } = await this.authorizedJob(principal, input.jobId);
-    if (!["ASSIGNED", "IN_PROGRESS"].includes(String(job.status))) {
-      throw new AppError(409, "FIELD_REPORT_STATUS_INVALID", "Saha formu yalnız atanmış veya işlemdeki iş için kaydedilebilir.", false);
+    if (!job.maintenanceStartedAt || !["IN_PROGRESS", "ADDITIONAL_SUPPLY"].includes(String(job.status))) {
+      throw new AppError(409, "FIELD_REPORT_STATUS_INVALID", "Saha formu yalnız Bakımı Başlat işleminden sonra kaydedilebilir.", false);
     }
     const cycle = Number(job.workflowCycle ?? 1);
     const now = new Date();
@@ -247,8 +282,8 @@ export class JobCollaborationService {
   }
 
   public async updateRequest(principal: AuthPrincipal, input: { id: string; partSupplyStatus: string; note?: string }): Promise<{ id: string; status: string; unchanged?: true }> {
-    if (principal.tenantType !== "PLATFORM" && principal.tenantType !== "CPO") {
-      throw new AppError(403, "REQUEST_UPDATE_FORBIDDEN", "Ek talebi yalnız Bakımnerde veya ilgili CPO güncelleyebilir.", false);
+    if (principal.tenantType !== "CPO") {
+      throw new AppError(403, "REQUEST_UPDATE_FORBIDDEN", "Tedarik ve teslimat durumunu yalnız ilgili CPO güncelleyebilir.", false);
     }
     const partSupplyStatus = input.partSupplyStatus?.trim().toUpperCase() ?? "";
     if (!MANUAL_SUPPLY_STATUSES.has(partSupplyStatus)) {
@@ -282,10 +317,8 @@ export class JobCollaborationService {
       });
       if (unresolvedCount === 0) {
         await db.collection("jobs").updateOne({ _id: request.jobId }, {
-          $inc: { workflowCycle: 1 },
           $set: {
-            status: "ASSIGNED", assignmentAt: now, assignmentAcceptanceDeadlineAt: new Date(now.getTime() + 86400000),
-            contractorAcceptedAt: null, appointmentAt: null, outageNotificationSentAt: null, updatedAt: now,
+            status: "IN_PROGRESS", additionalSupplyCompletedAt: now, updatedAt: now,
           },
         });
       }
@@ -409,4 +442,44 @@ export class JobCollaborationService {
     if (!ObjectId.isValid(value)) throw new AppError(400, "IDENTIFIER_INVALID", "Geçersiz kayıt kimliği.", false);
     return new ObjectId(value);
   }
+}
+
+function createStoredZip(entries: ZipEntry[]): Buffer {
+  const localParts: Buffer[] = [];
+  const centralParts: Buffer[] = [];
+  let offset = 0;
+  for (const entry of entries) {
+    const name = Buffer.from(entry.name, "utf8");
+    const crc = crc32(entry.content);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4); local.writeUInt16LE(0x0800, 6);
+    local.writeUInt16LE(0, 8); local.writeUInt32LE(0, 10); local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(entry.content.length, 18); local.writeUInt32LE(entry.content.length, 22);
+    local.writeUInt16LE(name.length, 26); local.writeUInt16LE(0, 28);
+    localParts.push(local, name, entry.content);
+
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0); central.writeUInt16LE(20, 4); central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(0x0800, 8); central.writeUInt16LE(0, 10); central.writeUInt32LE(0, 12);
+    central.writeUInt32LE(crc, 16); central.writeUInt32LE(entry.content.length, 20); central.writeUInt32LE(entry.content.length, 24);
+    central.writeUInt16LE(name.length, 28); central.writeUInt16LE(0, 30); central.writeUInt16LE(0, 32);
+    central.writeUInt16LE(0, 34); central.writeUInt16LE(0, 36); central.writeUInt32LE(0, 38); central.writeUInt32LE(offset, 42);
+    centralParts.push(central, name);
+    offset += local.length + name.length + entry.content.length;
+  }
+  const centralDirectory = Buffer.concat(centralParts);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(0, 4); end.writeUInt16LE(0, 6);
+  end.writeUInt16LE(entries.length, 8); end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(centralDirectory.length, 12); end.writeUInt32LE(offset, 16); end.writeUInt16LE(0, 20);
+  return Buffer.concat([...localParts, centralDirectory, end]);
+}
+
+function crc32(content: Buffer): number {
+  let crc = 0xffffffff;
+  for (const byte of content) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
 }

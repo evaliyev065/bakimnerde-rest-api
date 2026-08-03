@@ -197,6 +197,7 @@ export class ContractorRegistrationService {
         authorizedTitle: claimed.authorizedTitle,
         address: { city: claimed.city, district: claimed.district, line: claimed.address },
         serviceRegions: claimed.serviceRegions,
+        activityAreas: claimed.specialties,
         specialties: claimed.specialties,
         availabilityDays: claimed.availabilityDays,
         contractApproval: {

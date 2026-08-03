@@ -6,6 +6,7 @@ import { hashPassword } from "../infrastructure/password.js";
 
 const TENANT_TYPES = new Set<TenantType>(["CPO", "CONTRACTOR"]);
 const PHONE_PATTERN = /^[1-9]\d{9}$/;
+const CONTRACTOR_ACTIVITY_AREAS = new Set(["PERIODIC_MAINTENANCE", "ELECTRICAL", "ELECTRONICS", "MECHANICAL", "SOFTWARE", "CHARGER_INSTALLATION"]);
 const ADMIN_ROLES: Record<TenantType, UserRole> = {
   PLATFORM: "PLATFORM_OWNER",
   CPO: "CPO_ADMIN",
@@ -53,6 +54,38 @@ export class TenantService {
       } },
       { $set: { "profile._id": "$$REMOVE", "profile.tenantId": "$$REMOVE" } },
     ]).toArray();
+  }
+
+  public async ownProfile(principal: AuthPrincipal): Promise<Document> {
+    const db = await this.database.db();
+    const tenantId = new ObjectId(principal.tenantId);
+    const tenant = await db.collection("tenants").findOne({ _id: tenantId });
+    if (tenant === null) throw new AppError(404, "TENANT_NOT_FOUND", "Firma bulunamadı.", false);
+    const profile = principal.tenantType === "CONTRACTOR" ? await db.collection("contractorProfiles").findOne({ tenantId }) : null;
+    return {
+      id: tenantId.toHexString(), name: tenant.name, type: tenant.type,
+      serviceRegions: profile?.serviceRegions ?? [],
+      activityAreas: profile?.activityAreas ?? profile?.specialties ?? [],
+    };
+  }
+
+  public async updateOwnCoverage(principal: AuthPrincipal, input: { serviceRegions: string[]; activityAreas: string[] }): Promise<{ id: string }> {
+    if (principal.tenantType !== "CONTRACTOR" || principal.role !== "CONTRACTOR_ADMIN") {
+      throw new AppError(403, "CONTRACTOR_COVERAGE_FORBIDDEN", "Kapsama alanını yalnız teknik servis yöneticisi güncelleyebilir.", false);
+    }
+    const serviceRegions = [...new Set((input.serviceRegions ?? []).map((item) => item.trim()).filter(Boolean))];
+    const activityAreas = [...new Set((input.activityAreas ?? []).map((item) => item.trim().toUpperCase()).filter(Boolean))];
+    if (serviceRegions.length === 0 || serviceRegions.length > 81 || activityAreas.length === 0 || activityAreas.some((item) => !CONTRACTOR_ACTIVITY_AREAS.has(item))) {
+      throw new AppError(400, "CONTRACTOR_COVERAGE_INVALID", "Hizmet bölgelerini ve faaliyet alanlarını kontrol edin.", false);
+    }
+    const tenantId = new ObjectId(principal.tenantId);
+    const db = await this.database.db();
+    await db.collection("contractorProfiles").updateOne(
+      { tenantId },
+      { $set: { serviceRegions, activityAreas, specialties: activityAreas, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
+      { upsert: true },
+    );
+    return { id: principal.tenantId };
   }
 
   public async create(principal: AuthPrincipal, input: CreateTenantInput): Promise<{ id: string; tenantKey: string }> {
