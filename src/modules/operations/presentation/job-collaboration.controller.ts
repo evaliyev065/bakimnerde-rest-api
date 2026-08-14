@@ -34,6 +34,7 @@ export class JobCollaborationController {
   public priceRequest = this.mutation("ADDITIONAL_REQUEST_PRICED", "additionalRequest", (request, principal) => this.service.priceRequest(principal, request.body));
   public setRequestDeadline = this.mutation("ADDITIONAL_REQUEST_DEADLINE_SET", "additionalRequest", (request, principal) => this.service.setRequestDeadline(principal, request.body));
   public updateRequest = this.mutation("ADDITIONAL_REQUEST_UPDATED", "additionalRequest", (request, principal) => this.service.updateRequest(principal, request.body));
+  public confirmRequestByField = this.mutation("ADDITIONAL_REQUEST_FIELD_CONFIRMED", "additionalRequest", (request, principal) => this.service.confirmRequestByField(principal, request.body));
   public listMessages = this.query((request, principal) => this.service.listMessages(principal, this.jobId(request)));
   public sendMessage = this.mutation("JOB_MESSAGE_SENT", "message", (request, principal) => this.service.sendMessage(principal, request.body));
 

@@ -31,7 +31,7 @@ const db = client.db(databaseName);
 const now = new Date();
 
 const collections = [
-  "tenants", "users", "contractorProfiles", "cpoProfiles", "chargePoints", "jobs", "jobEvents", "jobMedia", "jobFieldReports",
+  "tenants", "users", "contractorProfiles", "cpoProfiles", "stations", "chargePoints", "jobs", "jobEvents", "jobMedia", "jobFieldReports",
   "additionalRequests", "pricingRules", "wallets", "walletTransactions", "messages", "auditLogs", "counters",
   "contractorApplications", "notifications",
 ] as const;
@@ -43,10 +43,13 @@ await Promise.all([
   db.collection("users").createIndex({ tenantId: 1, role: 1, status: 1 }),
   db.collection("contractorProfiles").createIndex({ tenantId: 1 }, { unique: true }),
   db.collection("cpoProfiles").createIndex({ tenantId: 1 }, { unique: true }),
+  db.collection("stations").createIndex({ cpoTenantId: 1, normalizedKey: 1 }, { unique: true }),
   db.collection("chargePoints").createIndex({ cpoTenantId: 1, externalId: 1 }, { unique: true }),
+  db.collection("chargePoints").createIndex({ cpoTenantId: 1, stationId: 1, active: 1 }),
   db.collection("chargePoints").createIndex({ "station.city": 1, "station.district": 1, active: 1 }),
   db.collection("jobs").createIndex({ jobNumber: 1 }, { unique: true }),
   db.collection("jobs").createIndex({ cpoTenantId: 1, status: 1, createdAt: -1 }),
+  db.collection("jobs").createIndex({ cpoTenantId: 1, status: 1, givenDurationAt: 1 }),
   db.collection("jobs").createIndex({ contractorTenantId: 1, status: 1, appointmentAt: 1 }),
   db.collection("jobs").createIndex({ cpoTenantId: 1, "charger.externalId": 1, createdAt: -1 }),
   db.collection("jobs").createIndex({ cpoTenantId: 1, maintenanceTarget: 1, "station.name": 1, "station.city": 1, "station.district": 1, createdAt: -1 }),
@@ -76,6 +79,24 @@ await Promise.all([
   db.collection("contractorApplications").createIndex({ authorizedEmailNormalized: 1, status: 1 }),
 ]);
 
+await db.collection("jobs").updateMany(
+  { givenDurationAt: { $exists: false }, publishDeadlineAt: { $type: "date" }, publishedAt: { $type: "date" } },
+  [{ $set: {
+    givenDurationAt: "$publishDeadlineAt",
+    contractorGivenDurationAt: { $add: [
+      "$publishedAt",
+      { $multiply: [{ $subtract: ["$publishDeadlineAt", "$publishedAt"] }, 0.75] },
+    ] },
+  } }],
+);
+await Promise.all([
+  db.collection("chargePoints").updateMany({ model: { $exists: true } }, { $unset: { model: "" } }),
+  db.collection("jobs").updateMany(
+    { $or: [{ "charger.model": { $exists: true } }, { publishDeadlineAt: { $exists: true } }] },
+    { $unset: { "charger.model": "", publishDeadlineAt: "" } },
+  ),
+]);
+
 // Eski üretici rolü ve verileri yeni iş modelinde yoktur.
 const oldManufacturers = await db.collection("tenants").find({ type: "MANUFACTURER" }).project<{ _id: ObjectId }>({ _id: 1 }).toArray();
 const oldManufacturerIds = oldManufacturers.map(item => item._id);
@@ -97,7 +118,7 @@ const tenantIds = new Map<string, ObjectId>();
 for (const seed of tenantSeeds) {
   const existing = await db.collection("tenants").findOneAndUpdate(
     { tenantKey: seed.tenantKey },
-    { $set: { name: seed.name, type: seed.type, immutable: seed.immutable, status: "ACTIVE", contact: { email: seed.email, phone: seed.phone }, updatedAt: now }, $setOnInsert: { commercialPolicy: {}, createdAt: now } },
+    { $set: { name: seed.name, type: seed.type, immutable: seed.immutable, status: "ACTIVE", operationalStatus: "ACTIVE", contact: { email: seed.email, phone: seed.phone }, updatedAt: now }, $setOnInsert: { commercialPolicy: {}, createdAt: now } },
     { upsert: true, returnDocument: "after" },
   );
   if (existing?._id === undefined) throw new Error(`Tenant oluşturulamadı: ${seed.tenantKey}`);
@@ -126,27 +147,35 @@ const platformId = tenantIds.get("bakimnerde")!;
 const cpoId = tenantIds.get("wattarya")!;
 const contractorId = tenantIds.get("wattarya-teknik")!;
 const chargePointSeeds = [
-  { externalId: "TR-VGE-3482", model: "VX-180", station: { name: "İstanbul Havalimanı P3", city: "İstanbul", district: "Arnavutköy" } },
-  { externalId: "TR-VGE-2901", model: "VX-120", station: { name: "Nilüfer Plaza", city: "Bursa", district: "Nilüfer" } },
-  { externalId: "TR-VGE-4410", model: "VX-180", station: { name: "Gebze Teknoloji Vadisi", city: "Kocaeli", district: "Gebze" } },
+  { externalId: "TR-VGE-3482", station: { name: "İstanbul Havalimanı P3", city: "İstanbul", district: "Arnavutköy" } },
+  { externalId: "TR-VGE-2901", station: { name: "Nilüfer Plaza", city: "Bursa", district: "Nilüfer" } },
+  { externalId: "TR-VGE-4410", station: { name: "Gebze Teknoloji Vadisi", city: "Kocaeli", district: "Gebze" } },
 ] as const;
 for (const chargePoint of chargePointSeeds) {
+  const normalizedKey = [chargePoint.station.name, chargePoint.station.city, chargePoint.station.district]
+    .map((value) => value.trim().replace(/\s+/g, " ").toLocaleUpperCase("tr-TR")).join("|");
+  const station = await db.collection("stations").findOneAndUpdate(
+    { cpoTenantId: cpoId, normalizedKey },
+    { $set: { cpoTenantId: cpoId, normalizedKey, ...chargePoint.station, active: true, updatedAt: now }, $setOnInsert: { createdAt: now } },
+    { upsert: true, returnDocument: "after" },
+  );
   await db.collection("chargePoints").updateOne(
     { cpoTenantId: cpoId, externalId: chargePoint.externalId },
-    { $set: { ...chargePoint, cpoTenantId: cpoId, active: true, updatedAt: now }, $setOnInsert: { createdAt: now } },
+    { $set: { externalId: chargePoint.externalId, stationId: station?._id, station: chargePoint.station, cpoTenantId: cpoId, active: true, updatedAt: now }, $unset: { model: "" }, $setOnInsert: { createdAt: now } },
     { upsert: true },
   );
 }
 await db.collection("cpoProfiles").updateOne({ tenantId: cpoId }, { $set: { tenantId: cpoId, agreementType: "JOB_BASED", stationCount: 184, privatePolicy: { paymentTermDays: 14 }, updatedAt: now } }, { upsert: true });
 await db.collection("contractorProfiles").updateOne({ tenantId: contractorId }, { $set: { tenantId: contractorId, serviceRegions: ["İstanbul", "Bursa", "Kocaeli"], activityAreas: ["PERIODIC_MAINTENANCE", "ELECTRICAL", "ELECTRONICS"], specialties: ["PERIODIC_MAINTENANCE", "ELECTRICAL", "ELECTRONICS"], availabilityDays: [1, 2, 3, 4, 5, 6], maintenanceBaseCost: 6500, contractApproval: { status: "APPROVED", approvedAt: now, documentUrl: "/contracts/wattarya-teknik.pdf" }, privatePolicy: { paymentTermDays: 7 }, updatedAt: now } }, { upsert: true });
-await db.collection("wallets").updateOne({ tenantId: contractorId }, { $set: { tenantId: contractorId, type: "CLOSED", currency: "TRY", balance: 128400, blockedBalance: 17600, updatedAt: now }, $setOnInsert: { createdAt: now } }, { upsert: true });
-await db.collection("wallets").updateOne({ tenantId: cpoId }, { $set: { tenantId: cpoId, type: "CLOSED", currency: "TRY", balance: 420000, blockedBalance: 0, updatedAt: now }, $setOnInsert: { createdAt: now } }, { upsert: true });
+await db.collection("wallets").updateOne({ tenantId: contractorId }, { $set: { tenantId: contractorId, type: "CLOSED", currency: "TRY", balance: 128400, blockedBalance: 17600, creditLimit: 0, debtStatus: "CLEAR", updatedAt: now }, $setOnInsert: { createdAt: now } }, { upsert: true });
+await db.collection("wallets").updateOne({ tenantId: cpoId }, { $set: { tenantId: cpoId, type: "CLOSED", currency: "TRY", balance: 420000, blockedBalance: 0, creditLimit: 100000, debtStatus: "CLEAR", updatedAt: now }, $setOnInsert: { createdAt: now } }, { upsert: true });
 
 const sampleJobId = new ObjectId();
 const sampleJob = await db.collection("jobs").findOneAndUpdate({ jobNumber: "BN-2481" }, { $set: {
   cpoTenantId: cpoId, contractorTenantId: contractorId,
-  station: { name: "İstanbul Havalimanı P3", city: "İstanbul", district: "Arnavutköy" }, charger: { externalId: "TR-VGE-3482", model: "VX-180" },
-  status: "ASSIGNED", publishedAt: new Date(now.getTime() - 2 * 86400000), publishDeadlineAt: new Date(now.getTime() + 12 * 86400000),
+  station: { name: "İstanbul Havalimanı P3", city: "İstanbul", district: "Arnavutköy" }, charger: { externalId: "TR-VGE-3482" },
+  status: "ASSIGNED", publishedAt: new Date(now.getTime() - 2 * 86400000),
+  givenDurationAt: new Date(now.getTime() + 12 * 86400000), contractorGivenDurationAt: new Date(now.getTime() + 8.5 * 86400000), comment: "",
   assignmentAt: new Date(now.getTime() - 12 * 3600000), assignmentAcceptanceDeadlineAt: new Date(now.getTime() + 12 * 3600000),
   contractorAcceptedAt: new Date(now.getTime() - 10 * 3600000), appointmentAt: new Date(now.getTime() - 30 * 60000),
   outageNotificationSentAt: new Date(now.getTime() - 10 * 3600000),

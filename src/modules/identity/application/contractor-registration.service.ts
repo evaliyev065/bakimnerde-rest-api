@@ -171,6 +171,7 @@ export class ContractorRegistrationService {
         name: claimed.companyName,
         type: "CONTRACTOR",
         status: "ACTIVE",
+        operationalStatus: "ACTIVE",
         contact: { email: claimed.companyEmail, phone: claimed.companyPhone },
         commercialPolicy: {},
         createdAt: now,
@@ -217,6 +218,8 @@ export class ContractorRegistrationService {
         currency: "TRY",
         balance: 0,
         blockedBalance: 0,
+        creditLimit: 0,
+        debtStatus: "CLEAR",
         createdAt: now,
         updatedAt: now,
       });

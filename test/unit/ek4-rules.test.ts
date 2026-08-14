@@ -12,16 +12,16 @@ describe("Ek4 istasyon ve bakım hedefi kuralları", () => {
     const collections: Record<string, Record<string, unknown>> = {
       counters: { findOneAndUpdate: async () => ({ value: 2601 }) },
       tenants: { find: () => cursor([{ _id: new ObjectId(cpo.tenantId), type: "CPO" }]) },
-      chargePoints: { findOne: async () => ({ externalId: "CP-001", model: "M-1", station: storedStation }) },
+      chargePoints: { findOne: async () => ({ externalId: "CP-001", station: storedStation }) },
       jobs: { insertOne: async (value: Document) => { insertedJob = value; return { insertedId: value._id }; } },
       jobEvents: { insertOne: async () => ({ insertedId: new ObjectId() }) },
     };
     await new JobQueryService(database(collections)).create(cpo, {
       cpoTenantId: cpo.tenantId, stationName: "Yanlış İstasyon", city: "Ankara", district: "Çankaya",
-      maintenanceTarget: "DEVICE", chargerExternalId: "CP-001", chargerModel: "Yanlış model", deadlineAt: new Date().toISOString(),
+      maintenanceTarget: "DEVICE", chargerExternalId: "CP-001", givenDurationAt: futureDate(),
     });
     expect(insertedJob?.station).toEqual(storedStation);
-    expect(insertedJob?.charger).toEqual({ externalId: "CP-001", model: "M-1" });
+    expect(insertedJob?.charger).toEqual({ externalId: "CP-001" });
   });
 
   it("istasyon bakımını cihaz olmadan ayrı hedef ve alanla kaydeder", async () => {
@@ -35,7 +35,7 @@ describe("Ek4 istasyon ve bakım hedefi kuralları", () => {
     };
     await new JobQueryService(database(collections)).create(cpo, {
       cpoTenantId: cpo.tenantId, stationName: "Merkez", city: "Bursa", district: "Nilüfer",
-      maintenanceTarget: "STATION", stationMaintenanceArea: "GRID_CONNECTION", deadlineAt: new Date().toISOString(),
+      maintenanceTarget: "STATION", stationMaintenanceArea: "GRID_CONNECTION", givenDurationAt: futureDate(),
     });
     expect(insertedJob).toMatchObject({ maintenanceTarget: "STATION", stationMaintenanceArea: "GRID_CONNECTION", charger: null });
   });
@@ -56,3 +56,4 @@ function database(collections: Record<string, Record<string, unknown>>): MongoDa
   return { db: async () => ({ collection: (name: string) => collections[name] ?? {} }) } as unknown as MongoDatabase;
 }
 function cursor(items: Document[]) { return { project() { return this; }, async toArray() { return items; } }; }
+function futureDate(): string { return new Date(Date.now() + 7 * 86400000).toISOString(); }

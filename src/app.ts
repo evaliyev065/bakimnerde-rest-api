@@ -42,13 +42,13 @@ export function createApp(config: AppConfig, container: AppContainer): Express {
 
   const routes = new RouteRegistry(app);
   registerHealthRoutes(routes, container.healthController);
-  registerIdentityRoutes(routes, container.identityController, config);
-  registerContractorRegistrationRoutes(routes, container.contractorRegistrationController, config);
-  registerUserManagementRoutes(routes, container.userManagementController, config);
-  registerCommerceRoutes(routes, container.commerceController, config);
-  registerJobRoutes(routes, container.jobController, config);
-  registerJobCollaborationRoutes(routes, container.jobCollaborationController, config);
-  registerNotificationRoutes(routes, container.notificationController, config);
+  registerIdentityRoutes(routes, container.identityController, config, container.database);
+  registerContractorRegistrationRoutes(routes, container.contractorRegistrationController, config, container.database);
+  registerUserManagementRoutes(routes, container.userManagementController, config, container.database);
+  registerCommerceRoutes(routes, container.commerceController, config, container.database);
+  registerJobRoutes(routes, container.jobController, config, container.database);
+  registerJobCollaborationRoutes(routes, container.jobCollaborationController, config, container.database);
+  registerNotificationRoutes(routes, container.notificationController, config, container.database);
 
   app.use(rejectUnsupportedBusinessMethod);
   app.use(notFoundHandler);

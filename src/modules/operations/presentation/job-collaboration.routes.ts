@@ -1,10 +1,11 @@
 import type { AppConfig } from "../../../config/env.js";
+import type { MongoDatabase } from "../../../infrastructure/mongodb/database.js";
 import type { RouteRegistry } from "../../../shared/http/route-registry.js";
 import { authenticate } from "../../identity/presentation/auth.middleware.js";
 import type { JobCollaborationController } from "./job-collaboration.controller.js";
 
-export function registerJobCollaborationRoutes(routes: RouteRegistry, controller: JobCollaborationController, config: AppConfig): void {
-  const auth = authenticate(config);
+export function registerJobCollaborationRoutes(routes: RouteRegistry, controller: JobCollaborationController, config: AppConfig, database: MongoDatabase): void {
+  const auth = authenticate(config, database);
   routes.post("/job-evidence-list", auth, controller.listEvidence);
   routes.post("/job-evidence-download", auth, controller.downloadEvidence);
   routes.post("/job-evidence-download-all", auth, controller.downloadAllEvidence);
@@ -16,6 +17,7 @@ export function registerJobCollaborationRoutes(routes: RouteRegistry, controller
   routes.post("/additional-requests-price", auth, controller.priceRequest);
   routes.post("/additional-requests-deadline", auth, controller.setRequestDeadline);
   routes.post("/additional-requests-update", auth, controller.updateRequest);
+  routes.post("/additional-requests-field-confirm", auth, controller.confirmRequestByField);
   routes.post("/job-messages-list", auth, controller.listMessages);
   routes.post("/job-messages-send", auth, controller.sendMessage);
 }

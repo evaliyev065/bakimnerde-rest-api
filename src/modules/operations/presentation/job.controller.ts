@@ -16,6 +16,13 @@ export class JobController {
     const data = await this.service.summary((response as AuthenticatedResponse).locals.auth);
     response.json(success(request as ContextRequest, data));
   };
+  public detail = async (request: Request, response: Response): Promise<void> => {
+    const data = await this.service.detail(
+      (response as AuthenticatedResponse).locals.auth,
+      (request.body as { id?: string }).id ?? "",
+    );
+    response.json(success(request as ContextRequest, data));
+  };
   public listChargePoints = async (request: Request, response: Response): Promise<void> => {
     const data = await this.service.listChargePoints((response as AuthenticatedResponse).locals.auth);
     response.json(success(request as ContextRequest, data));
@@ -37,8 +44,14 @@ export class JobController {
     response.json(success(request as ContextRequest, data));
   };
 
+  public createStation = this.mutation("STATION_CREATED", (request, principal) => this.service.createStation(principal, request.body));
+  public createChargePoint = this.mutation("CHARGE_POINT_CREATED", (request, principal) => this.service.createChargePoint(principal, request.body));
   public create = this.mutation("JOB_CREATED", (request, principal) => this.service.create(principal, request.body));
   public update = this.mutation("JOB_UPDATED", (request, principal) => this.service.update(principal, request.body));
+  public assignContractor = this.mutation("CONTRACTOR_ASSIGNED", (request, principal) => this.service.assignContractor(principal, request.body));
+  public updateAppointment = this.mutation("JOB_APPOINTMENT_UPDATED", (request, principal) => this.service.updateAppointment(principal, request.body));
+  public updateGivenDuration = this.mutation("JOB_GIVEN_DURATION_UPDATED", (request, principal) => this.service.updateGivenDuration(principal, request.body));
+  public reviewByCpo = this.mutation("JOB_CPO_REVIEWED", (request, principal) => this.service.reviewByCpo(principal, request.body));
   public changeStatus = this.mutation("JOB_STATUS_CHANGED", (request, principal) => this.service.changeStatus(principal, request.body));
   public acceptAssignment = this.mutation("JOB_ASSIGNMENT_ACCEPTED", (request, principal) => this.service.acceptAssignment(principal, request.body));
   public assignFieldWorker = this.mutation("FIELD_WORKER_ASSIGNED", (request, principal) => this.service.assignFieldWorker(principal, request.body));

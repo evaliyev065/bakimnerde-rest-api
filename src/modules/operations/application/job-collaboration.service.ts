@@ -12,7 +12,7 @@ const FIELD_REPORT_OPTIONS = {
 };
 
 const ADDITIONAL_SUPPLY_TYPES = new Set(["FAN_REPLACEMENT", "CABLE_REPLACEMENT", "CONNECTOR_REPLACEMENT", "OTHER_SUPPLY"]);
-const MANUAL_SUPPLY_STATUSES = new Set(["DELAYED", "SUPPLIED"]);
+const MANUAL_SUPPLY_STATUSES = new Set(["DELAYED", "AWAITING_FIELD_CONFIRMATION"]);
 
 interface ZipEntry { name: string; content: Buffer }
 
@@ -201,7 +201,7 @@ export class JobCollaborationService {
       throw new AppError(400, "ADDITIONAL_SUPPLY_INVALID", "Ek tedarik türünü ve açıklamasını kontrol edin.", false);
     }
     const { db, jobId, job } = await this.authorizedJob(principal, input.jobId);
-    if (!["ASSIGNED", "IN_PROGRESS", "ADDITIONAL_SUPPLY"].includes(String(job.status))) {
+    if (!["IN_PROGRESS", "ADDITIONAL_SUPPLY"].includes(String(job.status)) || !job.maintenanceStartedAt) {
       throw new AppError(409, "ADDITIONAL_SUPPLY_JOB_STATUS_INVALID", "Bu iş aşamasında yeni ek tedarik talebi açılamaz.", false);
     }
     if (input.clientOperationId) {
@@ -263,7 +263,7 @@ export class JobCollaborationService {
     if (!request.cpoVisibleAt || Number(request.cpoPrice ?? request.laborPrice ?? 0) <= 0) {
       throw new AppError(409, "ADDITIONAL_REQUEST_NOT_PRICED", "Bakımnerde fiyatlandırması tamamlanmadan kesin tarih verilemez.", false);
     }
-    if (request.partSupplyStatus === "SUPPLIED") {
+    if (["AWAITING_FIELD_CONFIRMATION", "SUPPLIED"].includes(String(request.partSupplyStatus))) {
       throw new AppError(409, "ADDITIONAL_REQUEST_ALREADY_SUPPLIED", "Temin edilmiş talep için tarih değiştirilemez.", false);
     }
     const now = new Date();
@@ -298,32 +298,80 @@ export class JobCollaborationService {
       throw new AppError(403, "ADDITIONAL_REQUEST_NOT_ASSIGNED_TO_CPO", "Bu ek tedarik talebi henüz CPO'ya aktarılmadı.", false);
     }
     if (request.partSupplyStatus === partSupplyStatus) return { id: input.id, status: partSupplyStatus, unchanged: true };
+    if (["AWAITING_FIELD_CONFIRMATION", "SUPPLIED"].includes(String(request.partSupplyStatus))) {
+      throw new AppError(409, "ADDITIONAL_REQUEST_FIELD_CONTROLLED", "Saha teslim aşamasına geçen talebin durumunu yalnız atanmış saha personeli tamamlayabilir.", false);
+    }
     if (!request.supplyDeadlineAt) {
       throw new AppError(409, "ADDITIONAL_REQUEST_DEADLINE_REQUIRED", "Manuel durum girmeden önce CPO kesin tedarik tarihini bildirmelidir.", false);
     }
-    const suppliedNow = partSupplyStatus === "SUPPLIED";
     const now = new Date();
     const statusUpdate: Document = {
       $set: {
-        status: partSupplyStatus, partSupplyStatus, restartRequired: suppliedNow,
-        ...(suppliedNow ? { suppliedAt: now } : {}), updatedAt: now,
+        status: partSupplyStatus, partSupplyStatus,
+        ...(partSupplyStatus === "AWAITING_FIELD_CONFIRMATION"
+          ? { deliveredToFieldAt: now, deliveredToFieldByUserId: new ObjectId(principal.userId) }
+          : {}),
+        updatedAt: now,
       },
       $push: { statusHistory: { status: partSupplyStatus, note: input.note?.trim().slice(0, 1000) ?? "", actorUserId: new ObjectId(principal.userId), createdAt: now } },
     };
     await db.collection("additionalRequests").updateOne({ _id: id, partSupplyStatus: { $ne: partSupplyStatus } }, statusUpdate);
-    if (suppliedNow) {
-      const unresolvedCount = await db.collection("additionalRequests").countDocuments({
-        jobId: request.jobId, _id: { $ne: id }, partSupplyStatus: { $ne: "SUPPLIED" },
-      });
-      if (unresolvedCount === 0) {
-        await db.collection("jobs").updateOne({ _id: request.jobId }, {
-          $set: {
-            status: "IN_PROGRESS", additionalSupplyCompletedAt: now, updatedAt: now,
-          },
-        });
-      }
-    }
     return { id: input.id, status: partSupplyStatus };
+  }
+
+  public async confirmRequestByField(
+    principal: AuthPrincipal,
+    input: { id: string; jobId?: string; clientOperationId?: string },
+  ): Promise<{ id: string; status: "SUPPLIED"; unchanged?: true }> {
+    if (principal.role !== "FIELD_WORKER") {
+      throw new AppError(403, "FIELD_WORKER_REQUIRED", "Parçanın fiziksel teslimini yalnız atanmış saha personeli doğrulayabilir.", false);
+    }
+    const id = this.objectId(input.id);
+    const db = await this.database.db();
+    const request = await db.collection("additionalRequests").findOne({ _id: id });
+    if (request === null) throw new AppError(404, "ADDITIONAL_REQUEST_NOT_FOUND", "Ek tedarik talebi bulunamadı.", false);
+    if (input.jobId && (!ObjectId.isValid(input.jobId) || !request.jobId.equals(new ObjectId(input.jobId)))) {
+      throw new AppError(400, "ADDITIONAL_REQUEST_JOB_MISMATCH", "Ek tedarik talebi ile iş kimliği eşleşmiyor.", false);
+    }
+    const { jobId, job } = await this.authorizedJob(principal, request.jobId.toHexString());
+    if (request.partSupplyStatus === "SUPPLIED") return { id: input.id, status: "SUPPLIED", unchanged: true };
+    if (request.partSupplyStatus !== "AWAITING_FIELD_CONFIRMATION") {
+      throw new AppError(409, "FIELD_CONFIRMATION_NOT_READY", "CPO parçayı saha ekibine ulaştırdığını bildirmeden teslim doğrulanamaz.", false);
+    }
+    if (input.clientOperationId) {
+      const duplicate = await db.collection("additionalRequests").findOne({
+        _id: id, fieldConfirmationClientOperationId: input.clientOperationId,
+      });
+      if (duplicate) return { id: input.id, status: "SUPPLIED", unchanged: true };
+    }
+    const now = new Date();
+    const update = await db.collection("additionalRequests").updateOne(
+      { _id: id, jobId, partSupplyStatus: "AWAITING_FIELD_CONFIRMATION" },
+      {
+        $set: {
+          status: "SUPPLIED", partSupplyStatus: "SUPPLIED", restartRequired: true,
+          suppliedAt: now, fieldConfirmedAt: now, fieldConfirmedByUserId: new ObjectId(principal.userId),
+          ...(input.clientOperationId ? { fieldConfirmationClientOperationId: input.clientOperationId } : {}),
+          updatedAt: now,
+        },
+        $push: { statusHistory: {
+          status: "SUPPLIED", note: "Parça atanmış saha personeli tarafından fiziksel olarak teslim alındı.",
+          actorUserId: new ObjectId(principal.userId), createdAt: now,
+        } },
+      } as Document,
+    );
+    if (update.matchedCount === 0) {
+      const latest = await db.collection("additionalRequests").findOne({ _id: id });
+      if (latest?.partSupplyStatus === "SUPPLIED") return { id: input.id, status: "SUPPLIED", unchanged: true };
+      throw new AppError(409, "FIELD_CONFIRMATION_CONFLICT", "Teslim durumu değişti; ekranı yenileyip tekrar deneyin.", true);
+    }
+    const unresolvedCount = await db.collection("additionalRequests").countDocuments({ jobId, partSupplyStatus: { $ne: "SUPPLIED" } });
+    if (unresolvedCount === 0) {
+      await db.collection("jobs").updateOne({ _id: jobId }, { $set: {
+        status: job.maintenanceStartedAt ? "IN_PROGRESS" : "ASSIGNED", additionalSupplyCompletedAt: now, updatedAt: now,
+      } });
+    }
+    return { id: input.id, status: "SUPPLIED" };
   }
 
   public async listMessages(principal: AuthPrincipal, jobIdValue: string): Promise<Document[]> {

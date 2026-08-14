@@ -85,29 +85,78 @@ export class CommerceService {
       { $project: {
         id: { $toString: "$_id" }, _id: 0, tenantId: { $toString: "$tenantId" },
         tenantName: { $ifNull: [{ $first: "$tenant.name" }, "Bilinmeyen firma"] },
-        tenantType: { $first: "$tenant.type" }, type: 1, currency: 1, balance: 1, blockedBalance: 1, updatedAt: 1,
+        tenantType: { $first: "$tenant.type" }, type: 1, currency: 1, balance: 1, blockedBalance: 1,
+        creditLimit: { $ifNull: ["$creditLimit", 0] },
+        debtAmount: { $cond: [{ $lt: [{ $ifNull: ["$balance", 0] }, 0] }, { $multiply: [{ $ifNull: ["$balance", 0] }, -1] }, 0] },
+        borrowableAmount: { $cond: [
+          { $gt: [{ $add: [{ $ifNull: ["$creditLimit", 0] }, { $cond: [{ $lt: [{ $ifNull: ["$balance", 0] }, 0] }, { $ifNull: ["$balance", 0] }, 0] }] }, 0] },
+          { $add: [{ $ifNull: ["$creditLimit", 0] }, { $cond: [{ $lt: [{ $ifNull: ["$balance", 0] }, 0] }, { $ifNull: ["$balance", 0] }, 0] }] },
+          0,
+        ] },
+        debtStatus: { $ifNull: ["$debtStatus", { $cond: [{ $lt: [{ $ifNull: ["$balance", 0] }, 0] }, "IN_DEBT", "CLEAR"] }] },
+        updatedAt: 1,
       } },
     ]).toArray();
   }
 
-  public async adjustWallet(principal: AuthPrincipal, input: { tenantId: string; amount: number; description: string }): Promise<{ transactionId: string; balance: number }> {
+  public async adjustWallet(
+    principal: AuthPrincipal,
+    input: { tenantId: string; amount: number; description: string; paymentMethod?: "MANUAL" | "WALLET" | "CREDIT_CARD" },
+  ): Promise<{ transactionId: string; balance: number }> {
     this.assertPlatform(principal);
     if (!Number.isFinite(input.amount) || input.amount === 0 || !input.description?.trim()) {
       throw new AppError(400, "WALLET_ADJUSTMENT_INVALID", "Tutar sıfırdan farklı olmalı ve açıklama girilmelidir.", false);
+    }
+    const paymentMethod = input.paymentMethod ?? "MANUAL";
+    if (!["MANUAL", "WALLET", "CREDIT_CARD"].includes(paymentMethod)) {
+      throw new AppError(400, "PAYMENT_METHOD_INVALID", "Geçersiz ödeme yöntemi.", false);
     }
     const tenantId = this.objectId(input.tenantId);
     const db = await this.database.db();
     const wallet = await db.collection("wallets").findOne({ tenantId });
     if (wallet === null) throw new AppError(404, "WALLET_NOT_FOUND", "Firma cüzdanı bulunamadı.", false);
-    const currentBalance = Number(wallet.balance ?? 0);
-    const nextBalance = currentBalance + Number(input.amount);
-    if (nextBalance < 0) throw new AppError(409, "WALLET_BALANCE_INSUFFICIENT", "İşlem cüzdan bakiyesini eksiye düşüremez.", false);
+    const tenant = await db.collection("tenants").findOne({ _id: tenantId });
+    if (tenant === null) throw new AppError(404, "TENANT_NOT_FOUND", "Firma bulunamadı.", false);
+    const amount = Number(input.amount);
     const now = new Date();
     const transactionId = new ObjectId();
-    await db.collection("wallets").updateOne({ _id: wallet._id }, { $set: { balance: nextBalance, updatedAt: now } });
+    const minimumBalanceExpression: Document | number = tenant.type === "CPO"
+      ? { $multiply: [-1, { $ifNull: ["$creditLimit", 0] }] }
+      : 0;
+    const walletFilter: Document = { _id: wallet._id };
+    if (amount < 0) {
+      walletFilter.$expr = { $gte: [
+        { $add: [{ $ifNull: ["$balance", 0] }, amount] },
+        minimumBalanceExpression,
+      ] };
+    }
+    const walletUpdate = await db.collection("wallets").updateOne(
+      walletFilter,
+      [
+        { $set: { balance: { $add: [{ $ifNull: ["$balance", 0] }, amount] }, updatedAt: now } },
+        { $set: { debtStatus: { $cond: [
+          { $lt: ["$balance", minimumBalanceExpression] },
+          "DEBT_LIMIT_EXCEEDED",
+          { $cond: [{ $lt: ["$balance", 0] }, "IN_DEBT", "CLEAR"] },
+        ] } } },
+      ],
+    );
+    if (walletUpdate.matchedCount === 0) {
+      throw new AppError(409, "CPO_CREDIT_LIMIT_EXCEEDED", "İşlem tanımlı bakiye ve borçlanma limitini aşamaz.", false);
+    }
+    const updatedWallet = await db.collection("wallets").findOne({ _id: wallet._id });
+    if (updatedWallet === null) throw new AppError(404, "WALLET_NOT_FOUND", "Firma cüzdanı bulunamadı.", true);
+    const nextBalance = Number(updatedWallet.balance ?? 0);
+    const creditLimit = tenant.type === "CPO" ? Math.max(0, Number(updatedWallet.creditLimit ?? 0)) : 0;
+    if (tenant.type === "CPO") {
+      await db.collection("tenants").updateOne({ _id: tenantId }, { $set: {
+        operationalStatus: nextBalance < -creditLimit ? "DEBT_BLOCKED" : "ACTIVE", updatedAt: now,
+      } });
+    }
     await db.collection("walletTransactions").insertOne({
-      _id: transactionId, walletId: wallet._id, tenantId, amount: Number(input.amount),
-      direction: input.amount > 0 ? "CREDIT" : "DEBIT", description: input.description.trim(),
+      _id: transactionId, walletId: wallet._id, tenantId, amount,
+      type: "MANUAL_ADJUSTMENT", paymentMethod, currency: String(wallet.currency ?? "TRY"),
+      direction: amount > 0 ? "CREDIT" : "DEBIT", description: input.description.trim(),
       createdByUserId: new ObjectId(principal.userId), createdAt: now,
     });
     return { transactionId: transactionId.toHexString(), balance: nextBalance };
@@ -118,14 +167,87 @@ export class CommerceService {
     const db = await this.database.db();
     const match = principal.tenantType === "PLATFORM" ? {} : { tenantId: new ObjectId(principal.tenantId) };
     return db.collection("walletTransactions").aggregate([
-      { $match: match }, { $sort: { createdAt: -1 } }, { $limit: 200 },
+      { $match: match }, { $sort: { createdAt: -1 } },
       { $lookup: { from: "tenants", localField: "tenantId", foreignField: "_id", as: "tenant" } },
+      { $lookup: { from: "jobs", localField: "jobId", foreignField: "_id", as: "job" } },
       { $project: {
         id: { $toString: "$_id" }, _id: 0, tenantId: { $toString: "$tenantId" },
         tenantName: { $ifNull: [{ $first: "$tenant.name" }, "Bilinmeyen firma"] },
-        amount: 1, direction: 1, description: 1, createdAt: 1,
+        amount: 1, direction: 1, description: 1, createdAt: 1, currency: 1, type: 1,
+        paymentMethod: { $ifNull: ["$paymentMethod", { $cond: [
+          { $eq: [{ $ifNull: ["$type", "MANUAL_ADJUSTMENT"] }, "MANUAL_ADJUSTMENT"] }, "MANUAL", "WALLET",
+        ] }] },
+        jobId: { $cond: [{ $ifNull: ["$jobId", false] }, { $toString: "$jobId" }, null] },
+        jobNumber: { $ifNull: [{ $first: "$job.jobNumber" }, null] },
       } },
     ]).toArray();
+  }
+
+  public async walletTransactionDetail(principal: AuthPrincipal, idValue: string): Promise<Document> {
+    this.assertWalletReader(principal);
+    const id = this.objectId(idValue);
+    const db = await this.database.db();
+    const match: Document = { _id: id };
+    if (principal.tenantType !== "PLATFORM") match.tenantId = new ObjectId(principal.tenantId);
+    const rows = await db.collection("walletTransactions").aggregate([
+      { $match: match },
+      { $lookup: { from: "tenants", localField: "tenantId", foreignField: "_id", as: "tenant" } },
+      { $lookup: { from: "jobs", localField: "jobId", foreignField: "_id", as: "job" } },
+      { $project: {
+        id: { $toString: "$_id" }, _id: 0, tenantId: { $toString: "$tenantId" },
+        tenantName: { $ifNull: [{ $first: "$tenant.name" }, "Bilinmeyen firma"] },
+        jobId: { $cond: [{ $ifNull: ["$jobId", false] }, { $toString: "$jobId" }, null] },
+        jobNumber: { $ifNull: [{ $first: "$job.jobNumber" }, null] },
+        walletId: { $cond: [{ $ifNull: ["$walletId", false] }, { $toString: "$walletId" }, null] },
+        type: { $ifNull: ["$type", "MANUAL_ADJUSTMENT"] },
+        paymentMethod: { $ifNull: ["$paymentMethod", { $cond: [
+          { $eq: [{ $ifNull: ["$type", "MANUAL_ADJUSTMENT"] }, "MANUAL_ADJUSTMENT"] }, "MANUAL", "WALLET",
+        ] }] },
+        paymentReference: { $ifNull: ["$paymentReference", null] }, cardSummary: { $ifNull: ["$cardSummary", null] },
+        amount: 1, direction: 1, currency: { $ifNull: ["$currency", "TRY"] }, description: 1, createdAt: 1,
+      } },
+      { $limit: 1 },
+    ]).toArray();
+    if (rows[0] === undefined) throw new AppError(404, "WALLET_TRANSACTION_NOT_FOUND", "Ödeme kaydı bulunamadı.", false);
+    return rows[0];
+  }
+
+  public async updateCreditLimit(
+    principal: AuthPrincipal,
+    input: { tenantId: string; creditLimit: number },
+  ): Promise<{ tenantId: string; creditLimit: number; borrowableAmount: number; debtStatus: string }> {
+    this.assertPlatform(principal);
+    const tenantId = this.objectId(input.tenantId);
+    const creditLimit = Number(input.creditLimit);
+    if (!Number.isFinite(creditLimit) || creditLimit < 0) {
+      throw new AppError(400, "CREDIT_LIMIT_INVALID", "Borçlanma limiti sıfır veya daha büyük olmalıdır.", false);
+    }
+    const db = await this.database.db();
+    const tenant = await db.collection("tenants").findOne({ _id: tenantId, type: "CPO" });
+    if (tenant === null) throw new AppError(400, "CPO_TENANT_INVALID", "Borçlanma limiti yalnız CPO firması için tanımlanabilir.", false);
+    const wallet = await db.collection("wallets").findOne({ tenantId });
+    if (wallet === null) throw new AppError(404, "WALLET_NOT_FOUND", "CPO cüzdanı bulunamadı.", false);
+    const now = new Date();
+    await db.collection("wallets").updateOne(
+      { _id: wallet._id },
+      [
+        { $set: { creditLimit, updatedAt: now } },
+        { $set: { debtStatus: { $cond: [
+          { $lt: [{ $ifNull: ["$balance", 0] }, -creditLimit] },
+          "DEBT_LIMIT_EXCEEDED",
+          { $cond: [{ $lt: [{ $ifNull: ["$balance", 0] }, 0] }, "IN_DEBT", "CLEAR"] },
+        ] } } },
+      ],
+    );
+    const updatedWallet = await db.collection("wallets").findOne({ _id: wallet._id });
+    if (updatedWallet === null) throw new AppError(404, "WALLET_NOT_FOUND", "CPO cüzdanı bulunamadı.", true);
+    const balance = Number(updatedWallet.balance ?? 0);
+    const debtStatus = balance < -creditLimit ? "DEBT_LIMIT_EXCEEDED" : balance < 0 ? "IN_DEBT" : "CLEAR";
+    const borrowableAmount = Math.max(0, creditLimit + Math.min(balance, 0));
+    await db.collection("tenants").updateOne({ _id: tenantId }, { $set: {
+      operationalStatus: debtStatus === "DEBT_LIMIT_EXCEEDED" ? "DEBT_BLOCKED" : "ACTIVE", updatedAt: now,
+    } });
+    return { tenantId: input.tenantId, creditLimit, borrowableAmount, debtStatus };
   }
 
   private validatePrice(input: PriceInput): void {

@@ -17,6 +17,7 @@ export interface TenantDocument {
   type: TenantType;
   immutable?: boolean;
   status: "ACTIVE" | "SUSPENDED";
+  operationalStatus?: "ACTIVE" | "DEBT_BLOCKED";
   contact: { email: string; phone: string };
   commercialPolicy: Record<string, unknown>;
   createdAt: Date;

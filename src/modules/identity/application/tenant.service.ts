@@ -97,7 +97,7 @@ export class TenantService {
     const normalizedKey = input.tenantKey.trim().toLocaleLowerCase("tr-TR").replace(/[^a-z0-9-]/g, "-");
     try {
       await db.collection<TenantDocument>("tenants").insertOne({
-        _id: tenantId, tenantKey: normalizedKey, name: input.name.trim(), type: input.type, status: "ACTIVE",
+        _id: tenantId, tenantKey: normalizedKey, name: input.name.trim(), type: input.type, status: "ACTIVE", operationalStatus: "ACTIVE",
         contact: { email: input.contactEmail.trim(), phone: input.contactPhone.trim() },
         commercialPolicy: {}, createdAt: now, updatedAt: now,
       });
@@ -110,7 +110,7 @@ export class TenantService {
       await this.upsertProfile(db, tenantId, input.type, input.profile ?? {}, now);
       if (input.type === "CPO" || input.type === "CONTRACTOR") {
         await db.collection("wallets").insertOne({
-          tenantId, type: "CLOSED", currency: "TRY", balance: 0, blockedBalance: 0, createdAt: now, updatedAt: now,
+          tenantId, type: "CLOSED", currency: "TRY", balance: 0, blockedBalance: 0, creditLimit: 0, debtStatus: "CLEAR", createdAt: now, updatedAt: now,
         });
       }
     } catch (error) {

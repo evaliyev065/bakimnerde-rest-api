@@ -18,6 +18,10 @@ export class MongoDatabase {
         database.collection("jobs").createIndex({ cpoTenantId: 1, "charger.externalId": 1, createdAt: -1 }),
         database.collection("jobs").createIndex({ cpoTenantId: 1, maintenanceTarget: 1, "station.name": 1, "station.city": 1, "station.district": 1, createdAt: -1 }),
         database.collection("jobs").createIndex({ contractorTenantId: 1, fieldWorkerUserId: 1, status: 1 }),
+        database.collection("jobs").createIndex({ cpoTenantId: 1, status: 1, givenDurationAt: 1 }),
+        database.collection("stations").createIndex({ cpoTenantId: 1, normalizedKey: 1 }, { unique: true }),
+        database.collection("chargePoints").createIndex({ cpoTenantId: 1, externalId: 1 }, { unique: true }),
+        database.collection("chargePoints").createIndex({ cpoTenantId: 1, stationId: 1, active: 1 }),
         database.collection("additionalRequests").createIndex({ jobId: 1, partSupplyStatus: 1, createdAt: -1 }),
         database.collection("additionalRequests").createIndex({ jobId: 1, cpoVisibleAt: 1 }),
         database.collection("walletTransactions").createIndex(

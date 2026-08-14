@@ -1,10 +1,11 @@
 import type { AppConfig } from "../../../config/env.js";
+import type { MongoDatabase } from "../../../infrastructure/mongodb/database.js";
 import type { RouteRegistry } from "../../../shared/http/route-registry.js";
 import type { IdentityController } from "./identity.controller.js";
 import { authenticate } from "./auth.middleware.js";
 
-export function registerIdentityRoutes(routes: RouteRegistry, controller: IdentityController, config: AppConfig): void {
-  const authenticated = authenticate(config);
+export function registerIdentityRoutes(routes: RouteRegistry, controller: IdentityController, config: AppConfig, database: MongoDatabase): void {
+  const authenticated = authenticate(config, database);
   routes.post("/auth-platform-login", controller.platformLogin);
   routes.post("/auth-company-login", controller.companyLogin);
   routes.post("/auth-field-login", controller.fieldLogin);

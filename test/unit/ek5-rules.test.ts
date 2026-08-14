@@ -11,7 +11,7 @@ describe("Ek5 ek tedarik akışı", () => {
     const jobId = new ObjectId();
     let inserted: Document | undefined;
     const database = databaseWithCollections({
-      jobs: { findOne: async () => ({ _id: jobId, status: "IN_PROGRESS", contractorTenantId: new ObjectId(contractor.tenantId) }) },
+      jobs: { findOne: async () => ({ _id: jobId, status: "IN_PROGRESS", maintenanceStartedAt: new Date(), contractorTenantId: new ObjectId(contractor.tenantId) }) },
       additionalRequests: { insertOne: async (value: Document) => { inserted = value; return { insertedId: new ObjectId() }; } },
     });
 

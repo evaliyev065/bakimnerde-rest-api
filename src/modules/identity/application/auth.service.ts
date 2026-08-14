@@ -33,6 +33,19 @@ export class AuthService {
       _id: user.tenantId, status: "ACTIVE", type: { $in: tenantTypes },
     });
     if (tenant?._id === undefined) throw new AppError(403, "LOGIN_CHANNEL_NOT_ALLOWED", "Bu hesap bu giriş kanalını kullanamaz.", false);
+    if (tenant.type === "CPO") {
+      const wallet = await db.collection("wallets").findOne({ tenantId: tenant._id });
+      const debtBlocked = wallet === null
+        ? tenant.operationalStatus === "DEBT_BLOCKED"
+        : Number(wallet.balance ?? 0) < -Math.max(0, Number(wallet.creditLimit ?? 0));
+      const operationalStatus = debtBlocked ? "DEBT_BLOCKED" : "ACTIVE";
+      if (tenant.operationalStatus !== operationalStatus) {
+        await db.collection<TenantDocument>("tenants").updateOne({ _id: tenant._id }, { $set: { operationalStatus, updatedAt: new Date() } });
+      }
+      if (debtBlocked) {
+        throw new AppError(403, "CPO_DEBT_BLOCKED", "Borçlanma limiti aşıldığı için CPO hesabı kullanıma kapatıldı.", false);
+      }
+    }
     const principal: AuthPrincipal = {
       userId: user._id.toHexString(), tenantId: tenant._id.toHexString(), tenantKey: tenant.tenantKey,
       tenantName: tenant.name, tenantType: tenant.type, name: user.name, email: user.email, role: user.role,
